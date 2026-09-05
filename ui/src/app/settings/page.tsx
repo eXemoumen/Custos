@@ -11,6 +11,7 @@ import {
   Cpu,
   Server,
   Save,
+  AlertOctagon,
   CheckCircle2,
 } from "lucide-react";
 
@@ -19,18 +20,51 @@ export default function SettingsPage() {
   const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434");
   const [ollamaModel, setOllamaModel] = useState("llama3.2");
   const [defaultAction, setDefaultAction] = useState("deny");
-  const [hmacKey, setHmacKey] = useState("custos-production-signing-key-2026");
+  const [hmacKey, setHmacKey] = useState("");
+  const [hmacMasked, setHmacMasked] = useState("");
   const [savedMsg, setSavedMsg] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    api.getPolicies().then((res) => {
-      if (res.default) setDefaultAction(res.default);
-    }).catch(() => {});
+    api.getSettings()
+      .then((res) => {
+        if (res.default_action) setDefaultAction(res.default_action);
+        if (res.ollama_url) setOllamaUrl(res.ollama_url);
+        if (res.ollama_model) setOllamaModel(res.ollama_model);
+        if (res.hmac_key_masked) setHmacMasked(res.hmac_key_masked);
+      })
+      .catch(() => {
+        api.getPolicies().then((res) => {
+          if (res.default) setDefaultAction(res.default);
+        }).catch(() => {});
+      });
   }, []);
 
-  const handleSave = () => {
-    setSavedMsg(true);
-    setTimeout(() => setSavedMsg(false), 3500);
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await api.updateSettings({
+        default_action: defaultAction,
+        ollama_url: ollamaUrl,
+        ollama_model: ollamaModel,
+        hmac_key: hmacKey.trim() ? hmacKey.trim() : undefined,
+      });
+      setSavedMsg(true);
+      if (hmacKey.trim()) {
+        setHmacMasked("••••••••");
+        setHmacKey("");
+      }
+      setTimeout(() => setSavedMsg(false), 3500);
+    } catch (err: unknown) {
+      console.error("Failed to save settings:", err);
+      const msg = err instanceof Error ? err.message : "Failed to save configuration";
+      setSaveError(msg);
+      setTimeout(() => setSaveError(null), 4500);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -47,6 +81,12 @@ export default function SettingsPage() {
           <div className="bg-[#10b981]/10 border border-[#10b981]/30 text-[#10b981] px-4 py-3 rounded-xl text-xs flex items-center gap-2 animate-in fade-in">
             <CheckCircle2 className="w-4 h-4 text-[#10b981]" />
             <span>Gateway settings saved successfully.</span>
+          </div>
+        )}
+        {saveError && (
+          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 px-4 py-3 rounded-xl text-xs flex items-center gap-2 animate-in fade-in">
+            <AlertOctagon className="w-4 h-4 text-rose-400 flex-shrink-0" />
+            <span>{saveError}</span>
           </div>
         )}
 
@@ -67,9 +107,15 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" role="radiogroup" aria-label="Default Permission Policy Floor">
               <label
-                onClick={() => setDefaultAction("deny")}
+                htmlFor="policy-floor-deny"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setDefaultAction("deny");
+                  }
+                }}
                 className={`p-4 rounded-xl border cursor-pointer flex flex-col gap-1 transition-all ${
                   defaultAction === "deny"
                     ? "bg-[#ef4444]/10 border-[#ef4444]/40 text-[#f8fafc]"
@@ -77,16 +123,33 @@ export default function SettingsPage() {
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-xs">HARD DENY (Recommended)</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="policy-floor-deny"
+                      type="radio"
+                      name="defaultAction"
+                      value="deny"
+                      checked={defaultAction === "deny"}
+                      onChange={() => setDefaultAction("deny")}
+                      className="accent-[#ef4444] cursor-pointer"
+                    />
+                    <span className="font-bold text-xs">HARD DENY (Recommended)</span>
+                  </div>
                   <span className="w-2 h-2 rounded-full bg-[#ef4444]" />
                 </div>
-                <span className="text-[11px] text-[#94a3b8]">
+                <span className="text-[11px] text-[#94a3b8] pl-5.5">
                   Zero-trust security floor: blocks all unconfigured tool actions.
                 </span>
               </label>
 
               <label
-                onClick={() => setDefaultAction("prompt")}
+                htmlFor="policy-floor-prompt"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setDefaultAction("prompt");
+                  }
+                }}
                 className={`p-4 rounded-xl border cursor-pointer flex flex-col gap-1 transition-all ${
                   defaultAction === "prompt"
                     ? "bg-[#f59e0b]/10 border-[#f59e0b]/40 text-[#f8fafc]"
@@ -94,10 +157,21 @@ export default function SettingsPage() {
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-xs">HOLD FOR HUMAN APPROVAL</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="policy-floor-prompt"
+                      type="radio"
+                      name="defaultAction"
+                      value="prompt"
+                      checked={defaultAction === "prompt"}
+                      onChange={() => setDefaultAction("prompt")}
+                      className="accent-[#f59e0b] cursor-pointer"
+                    />
+                    <span className="font-bold text-xs">HOLD FOR HUMAN APPROVAL</span>
+                  </div>
                   <span className="w-2 h-2 rounded-full bg-[#f59e0b]" />
                 </div>
-                <span className="text-[11px] text-[#94a3b8]">
+                <span className="text-[11px] text-[#94a3b8] pl-5.5">
                   Escalates unconfigured tool calls to the Live Approvals inbox.
                 </span>
               </label>
@@ -173,7 +247,8 @@ export default function SettingsPage() {
                 type="password"
                 value={hmacKey}
                 onChange={(e) => setHmacKey(e.target.value)}
-                className="w-full bg-[#020617] border border-[#334155] rounded-xl px-3.5 py-2 text-xs font-mono text-[#10b981] focus:outline-none focus:border-[#4f46e5]"
+                placeholder={hmacMasked ? `Configured on server: ${hmacMasked} (enter new key to update)` : "Enter HMAC secret signing key..."}
+                className="w-full bg-[#020617] border border-[#334155] rounded-xl px-3.5 py-2 text-xs font-mono text-[#10b981] placeholder:text-[#64748b] focus:outline-none focus:border-[#4f46e5]"
               />
             </div>
           </div>
@@ -183,9 +258,10 @@ export default function SettingsPage() {
         <div className="flex justify-end">
           <button
             onClick={handleSave}
-            className="btn-tactile group inline-flex items-center gap-2 pl-5 pr-2 py-2 rounded-full text-xs font-semibold bg-[#4f46e5] hover:bg-[#4338ca] text-white shadow-[0_2px_12px_rgba(79,70,229,0.3)] cursor-pointer transition-all"
+            disabled={isSaving}
+            className="btn-tactile group inline-flex items-center gap-2 pl-5 pr-2 py-2 rounded-full text-xs font-semibold bg-[#4f46e5] hover:bg-[#4338ca] disabled:opacity-50 text-white shadow-[0_2px_12px_rgba(79,70,229,0.3)] cursor-pointer transition-all"
           >
-            <span className="font-bold">Save Configuration</span>
+            <span className="font-bold">{isSaving ? "Saving..." : "Save Configuration"}</span>
             <div className="w-6 h-6 rounded-full bg-white/20 text-white flex items-center justify-center group-hover:scale-105 transition-transform">
               <Save className="w-3 h-3" />
             </div>

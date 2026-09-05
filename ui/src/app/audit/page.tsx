@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { Header } from "@/components/Header";
 import { TestGuardrailModal } from "@/components/TestGuardrailModal";
 import { api } from "@/lib/api";
@@ -25,7 +25,7 @@ export default function AuditPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [decisionFilter, setDecisionFilter] = useState("all");
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
@@ -232,14 +232,14 @@ export default function AuditPage() {
                     filteredEvents.map((e, idx) => {
                       const ts = e.ts_unix_ms || (e.ts ? e.ts * 1000 : null);
                       const riskVal = e.risk_score ?? e.risk ?? 0;
-                      const isExpanded = expandedIndex === idx;
+                      const eventKey = e.hash || `${ts || idx}-${e.tool || "event"}-${idx}`;
+                      const isExpanded = expandedId === eventKey;
                       const shortHash = e.hash ? e.hash.slice(0, 10) + "..." : "genesis";
 
                       return (
-                        <>
+                        <React.Fragment key={eventKey}>
                           <tr
-                            key={idx}
-                            onClick={() => setExpandedIndex(isExpanded ? null : idx)}
+                            onClick={() => setExpandedId(isExpanded ? null : eventKey)}
                             className="hover:bg-white/[0.02] transition-colors cursor-pointer"
                           >
                             <td className="py-3 px-2 text-slate-500">
@@ -330,7 +330,7 @@ export default function AuditPage() {
                               </td>
                             </tr>
                           )}
-                        </>
+                        </React.Fragment>
                       );
                     })
                   )}

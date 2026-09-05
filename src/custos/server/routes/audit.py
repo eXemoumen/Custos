@@ -25,7 +25,7 @@ async def get_audit_events(
     gw: GatewayManager = Depends(get_gw_manager),
 ) -> dict[str, Any]:
     """Retrieve paginated audit log events with optional filtering."""
-    all_events = gw.get_audit_events(limit=1000, offset=0)
+    all_events = gw.get_audit_events(limit=None, offset=0)
 
     filtered = all_events
     if decision:

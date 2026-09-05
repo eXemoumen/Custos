@@ -9,7 +9,7 @@ import {
   ThreatPattern,
 } from "./types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_CUSTOS_API || "http://localhost:8000";
+const BASE_URL = process.env.NEXT_PUBLIC_CUSTOS_API ?? "";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${BASE_URL}${path}`;
@@ -25,7 +25,27 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     let errorMsg = `API Error ${res.status}: ${res.statusText}`;
     try {
       const body = await res.json();
-      if (body.detail) errorMsg = body.detail;
+      if (body.detail) {
+        if (typeof body.detail === "string") {
+          errorMsg = body.detail;
+        } else if (Array.isArray(body.detail)) {
+          errorMsg = body.detail
+            .map((item: any) => {
+              if (typeof item === "string") return item;
+              if (item && typeof item === "object") {
+                const loc = Array.isArray(item.loc) ? item.loc.slice(1).join(".") : "";
+                const msg = item.msg || JSON.stringify(item);
+                return loc ? `${loc}: ${msg}` : msg;
+              }
+              return String(item);
+            })
+            .join("; ");
+        } else if (typeof body.detail === "object" && body.detail !== null) {
+          errorMsg = JSON.stringify(body.detail);
+        } else {
+          errorMsg = String(body.detail);
+        }
+      }
     } catch {
       // fallback
     }
@@ -120,6 +140,26 @@ export const api = {
   decideInvocation: (payload: import("./types").DecideRequest) =>
     request<import("./types").DecideResponse>("/api/v1/invocations/decide", {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  // Settings
+  getSettings: () =>
+    request<{
+      default_action: string;
+      ollama_url: string;
+      ollama_model: string;
+      hmac_key_configured: boolean;
+      hmac_key_masked: string;
+    }>("/api/v1/settings"),
+  updateSettings: (payload: {
+    default_action?: string;
+    ollama_url?: string;
+    ollama_model?: string;
+    hmac_key?: string;
+  }) =>
+    request<{ status: string; message: string }>("/api/v1/settings", {
+      method: "PUT",
       body: JSON.stringify(payload),
     }),
 };

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,10 +32,10 @@ def get_gw_manager() -> GatewayManager:
 
 class AssetCreate(BaseModel):
     name: str
-    asset_type: str = "file_path"
+    asset_type: AssetType = AssetType.FILE_PATH
     pattern: str
-    action: str = "deny"
-    severity: str = "high"
+    action: GuardrailAction = GuardrailAction.DENY
+    severity: Severity = Severity.HIGH
     description: str = ""
     enabled: bool = True
 
@@ -58,10 +59,10 @@ async def list_assets(gw: GatewayManager = Depends(get_gw_manager)) -> list[dict
 async def create_asset(body: AssetCreate, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
     asset = SensitiveAsset(
         name=body.name,
-        asset_type=AssetType(body.asset_type),
+        asset_type=body.asset_type,
         pattern=body.pattern,
-        action=GuardrailAction(body.action),
-        severity=Severity(body.severity),
+        action=body.action,
+        severity=body.severity,
         description=body.description,
         enabled=body.enabled,
     )
@@ -98,9 +99,9 @@ async def delete_asset(asset_id: str, gw: GatewayManager = Depends(get_gw_manage
 class RuleCreate(BaseModel):
     name: str
     natural_language_rule: str
-    category: str = "general"
-    action: str = "prompt"
-    severity: str = "high"
+    category: GuardrailCategory = GuardrailCategory.GENERAL
+    action: GuardrailAction = GuardrailAction.PROMPT
+    severity: Severity = Severity.HIGH
     target_tools: list[str] = Field(default_factory=lambda: ["*"])
     keywords: list[str] = Field(default_factory=list)
     enabled: bool = True
@@ -127,9 +128,9 @@ async def create_rule(body: RuleCreate, gw: GatewayManager = Depends(get_gw_mana
     rule = GuardrailRule(
         name=body.name,
         natural_language_rule=body.natural_language_rule,
-        category=GuardrailCategory(body.category),
-        action=GuardrailAction(body.action),
-        severity=Severity(body.severity),
+        category=body.category,
+        action=body.action,
+        severity=body.severity,
         target_tools=body.target_tools,
         keywords=body.keywords,
         enabled=body.enabled,
@@ -168,9 +169,9 @@ class ThreatCreate(BaseModel):
     name: str
     pattern: str
     is_regex: bool = True
-    severity: str = "critical"
+    severity: Severity = Severity.CRITICAL
     description: str = ""
-    action: str = "quarantine"
+    action: GuardrailAction = GuardrailAction.QUARANTINE
     enabled: bool = True
 
 
@@ -181,13 +182,24 @@ async def list_threats(gw: GatewayManager = Depends(get_gw_manager)) -> list[dic
 
 @router.post("/threats")
 async def create_threat(body: ThreatCreate, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    pattern = body.pattern.strip()
+    if not pattern:
+        raise HTTPException(status_code=400, detail="Pattern cannot be empty")
+    if len(pattern) > 1000:
+        raise HTTPException(status_code=400, detail="Threat pattern exceeds maximum allowed length of 1000 characters")
+    if body.is_regex:
+        try:
+            re.compile(pattern)
+        except re.error as err:
+            raise HTTPException(status_code=400, detail=f"Invalid regular expression: {err}") from err
+
     threat = ThreatPattern(
         name=body.name,
         pattern=body.pattern,
         is_regex=body.is_regex,
-        severity=Severity(body.severity),
+        severity=body.severity,
         description=body.description,
-        action=GuardrailAction(body.action),
+        action=body.action,
         enabled=body.enabled,
     )
     added = gw.kb_store.add_threat(threat)

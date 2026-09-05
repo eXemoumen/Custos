@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from typing import Any
 
@@ -75,7 +75,8 @@ class SensitiveAsset:
             data["action"] = GuardrailAction(data["action"])
         if "severity" in data and isinstance(data["severity"], str):
             data["severity"] = Severity(data["severity"])
-        return cls(**data)
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in allowed})
 
 
 @dataclass
@@ -106,7 +107,8 @@ class GuardrailRule:
             data["action"] = GuardrailAction(data["action"])
         if "severity" in data and isinstance(data["severity"], str):
             data["severity"] = Severity(data["severity"])
-        return cls(**data)
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in allowed})
 
 
 @dataclass
@@ -133,7 +135,8 @@ class ThreatPattern:
             data["action"] = GuardrailAction(data["action"])
         if "severity" in data and isinstance(data["severity"], str):
             data["severity"] = Severity(data["severity"])
-        return cls(**data)
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in allowed})
 
 
 @dataclass

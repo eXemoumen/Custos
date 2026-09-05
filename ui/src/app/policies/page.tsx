@@ -24,12 +24,19 @@ export default function PoliciesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.getPolicies().then((res) => {
-      setRules(res.rules || []);
-      setDefaultAction(res.default || "deny");
-    });
+    api.getPolicies()
+      .then((res) => {
+        setRules(res.rules || []);
+        setDefaultAction(res.default || "deny");
+        setLoadError(null);
+      })
+      .catch((err: unknown) => {
+        console.error("Failed to load policies:", err);
+        setLoadError(err instanceof Error ? err.message : "Failed to load policies from server");
+      });
   }, []);
 
   const filteredRules = rules.filter((rule) => {
@@ -63,6 +70,34 @@ export default function PoliciesPage() {
     };
   };
 
+  const isPromptDefault = defaultAction.toLowerCase() === "prompt";
+  const isAllowDefault = defaultAction.toLowerCase() === "allow";
+  const floorBadgeCls = isPromptDefault
+    ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+    : isAllowDefault
+    ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+    : "bg-rose-500/15 text-rose-300 border-rose-500/30";
+
+  const floorBorderCls = isPromptDefault
+    ? "border-amber-500/20 shadow-[0_8px_32px_-4px_rgba(245,158,11,0.1)]"
+    : isAllowDefault
+    ? "border-emerald-500/20 shadow-[0_8px_32px_-4px_rgba(16,185,129,0.1)]"
+    : "border-rose-500/20 shadow-[0_8px_32px_-4px_rgba(244,63,94,0.1)]";
+
+  const floorBgCls = isPromptDefault
+    ? "bg-amber-950/10"
+    : isAllowDefault
+    ? "bg-emerald-950/10"
+    : "bg-rose-950/10";
+
+  const floorIcon = isPromptDefault ? (
+    <Clock className="w-4 h-4 text-amber-400" />
+  ) : isAllowDefault ? (
+    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+  ) : (
+    <Lock className="w-4 h-4 text-rose-400" />
+  );
+
   return (
     <div className="pb-16">
       <Header
@@ -73,6 +108,13 @@ export default function PoliciesPage() {
       />
 
       <div className="p-8 max-w-[1400px] mx-auto flex flex-col gap-6">
+        {loadError && (
+          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 px-4 py-3 rounded-xl text-xs flex items-center gap-2 animate-in fade-in">
+            <ShieldAlert className="w-4 h-4 text-rose-400 flex-shrink-0" />
+            <span>{loadError}</span>
+          </div>
+        )}
+
         {/* Policy Summary Architecture Banner */}
         <div className="doppel-shell">
           <div className="doppel-core p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -101,8 +143,8 @@ export default function PoliciesPage() {
                 <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
                   Default Fallback Floor
                 </span>
-                <span className="mt-1 px-3 py-1 rounded-full text-xs font-mono font-bold bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                  {defaultAction.toUpperCase()} (Zero Trust)
+                <span className={`mt-1 px-3 py-1 rounded-full text-xs font-mono font-bold border ${floorBadgeCls}`}>
+                  {defaultAction.toUpperCase()}
                 </span>
               </div>
             </div>
@@ -192,26 +234,26 @@ export default function PoliciesPage() {
           })}
 
           {/* Terminal Fallback Floor Card */}
-          <div className="doppel-shell border-rose-500/20 shadow-[0_8px_32px_-4px_rgba(244,63,94,0.1)]">
-            <div className="doppel-core p-5 bg-rose-950/10 flex items-center justify-between">
+          <div className={`doppel-shell ${floorBorderCls}`}>
+            <div className={`doppel-core p-5 ${floorBgCls} flex items-center justify-between`}>
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                  <Lock className="w-4 h-4" />
+                <div className={`w-9 h-9 rounded-xl border flex items-center justify-center ${floorBadgeCls}`}>
+                  {floorIcon}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-rose-300">
-                      STAGE 06: IMPENETRABLE DEFAULT FALLBACK FLOOR
+                    <span className="text-xs font-mono font-bold uppercase text-slate-200">
+                      DEFAULT FALLBACK FLOOR: {defaultAction.toUpperCase()}
                     </span>
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Any tool execution not explicitly matched by preceding rules hits this zero-trust terminal gate.
+                    Any tool execution not explicitly matched by preceding rules evaluates against this configured fallback floor.
                   </p>
                 </div>
               </div>
 
-              <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
-                HARD DENY
+              <span className={`px-3 py-1 rounded-full text-xs font-mono font-bold border ${floorBadgeCls}`}>
+                {defaultAction.toUpperCase()}
               </span>
             </div>
           </div>

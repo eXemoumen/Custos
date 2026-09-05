@@ -24,10 +24,14 @@ export function ApprovalCard({ prompt, onRespond, isProcessing = false }: Approv
   const [copied, setCopied] = useState(false);
   const riskScore = Math.round(prompt.risk * 100);
 
-  const copyArgs = () => {
-    navigator.clipboard.writeText(JSON.stringify(prompt.args, null, 2));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyArgs = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(prompt.args, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy arguments to clipboard:", err);
+    }
   };
 
   const getRiskConfig = () => {

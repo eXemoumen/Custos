@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -60,6 +61,15 @@ class GatewayManager:
         self._agents: dict[str, dict[str, Any]] = {}
         self._quarantined_agents: set[str] = set()
 
+        # Cumulative metrics counters
+        self._metric_counters: dict[str, int] = {
+            "total_calls": 0,
+            "total_allowed": 0,
+            "total_blocked": 0,
+            "total_prompted": 0,
+        }
+        self._init_metrics_from_log()
+
         # Instantiate the Gateway
         self.gateway = Gateway(
             policy=self._policy,
@@ -68,6 +78,33 @@ class GatewayManager:
             audit_sink=self.audit_sink,
         )
         logger.info("Initialized Custos GatewayManager successfully.")
+
+    def _init_metrics_from_log(self) -> None:
+        """Populate initial cumulative metrics from existing audit log on disk."""
+        path = self.config.audit_log_path
+        if not path.exists():
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line_clean = line.strip()
+                    if not line_clean:
+                        continue
+                    try:
+                        data = json.loads(line_clean)
+                        ev = data.get("event") if isinstance(data.get("event"), dict) else data
+                        dec = str(ev.get("decision", "")).lower()
+                        self._metric_counters["total_calls"] += 1
+                        if dec in ("allow", "allow_once", "allow_and_persist"):
+                            self._metric_counters["total_allowed"] += 1
+                        elif dec in ("deny", "quarantine"):
+                            self._metric_counters["total_blocked"] += 1
+                        elif dec == "prompt":
+                            self._metric_counters["total_prompted"] += 1
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.error("Failed to read historical audit log for metrics: %s", e)
 
     def _build_policy(self) -> Policy:
         """Construct a Policy incorporating base rules and compiled Knowledge Base overlays."""
@@ -129,6 +166,7 @@ class GatewayManager:
                 )
                 self.audit_sink.emit(audit)
                 self._record_agent_activity(user_id, tool)
+                self._record_decision_metric(Decision.QUARANTINE)
                 return DecideResult(decision=Decision.QUARANTINE, audit=audit)
 
             context = SubjectContext(
@@ -154,7 +192,19 @@ class GatewayManager:
                 self._quarantined_agents.add(user_id)
 
             self._record_agent_activity(user_id, tool)
+            self._record_decision_metric(result.decision)
             return result
+
+    def _record_decision_metric(self, decision: Decision | str) -> None:
+        """Increment cumulative in-memory metrics counters."""
+        dec_str = decision.value if isinstance(decision, Decision) else str(decision).lower()
+        self._metric_counters["total_calls"] += 1
+        if dec_str in ("allow", "allow_once", "allow_and_persist"):
+            self._metric_counters["total_allowed"] += 1
+        elif dec_str in ("deny", "quarantine"):
+            self._metric_counters["total_blocked"] += 1
+        elif dec_str == "prompt":
+            self._metric_counters["total_prompted"] += 1
 
     def _record_agent_activity(self, agent_id: str, tool: str) -> None:
         """Record live agent telemetry."""
@@ -188,20 +238,22 @@ class GatewayManager:
     def quarantine_agent(self, agent_id: str) -> bool:
         """Place an agent in quarantine."""
         with self._lock:
+            if agent_id not in self._agents:
+                return False
             self._quarantined_agents.add(agent_id)
-            if agent_id in self._agents:
-                self._agents[agent_id]["status"] = "quarantined"
+            self._agents[agent_id]["status"] = "quarantined"
             return True
 
     def release_agent(self, agent_id: str) -> bool:
         """Release an agent from quarantine."""
         with self._lock:
+            if agent_id not in self._agents:
+                return False
             self._quarantined_agents.discard(agent_id)
-            if agent_id in self._agents:
-                self._agents[agent_id]["status"] = "active"
+            self._agents[agent_id]["status"] = "active"
             return True
 
-    def get_audit_events(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    def get_audit_events(self, limit: int | None = 50, offset: int = 0) -> list[dict[str, Any]]:
         """Read recent audit log events from the audit sink."""
         path = self.config.audit_log_path
         if not path.exists():
@@ -211,18 +263,22 @@ class GatewayManager:
         try:
             with open(path, encoding="utf-8") as f:
                 for line in f:
-                    line = line.strip()
-                    if line:
+                    line_clean = line.strip()
+                    if line_clean:
                         try:
-                            data = json.loads(line)
+                            data = json.loads(line_clean)
+                            line_hash = hashlib.sha256(line_clean.encode("utf-8")).hexdigest()
                             # Flatten event envelope if hash-chained
                             if "event" in data and isinstance(data["event"], dict):
-                                ev = data["event"]
-                                ev["hash"] = data.get("prev_hash")
+                                ev = dict(data["event"])
+                                ev["hash"] = line_hash
+                                ev["prev_hash"] = data.get("prev_hash")
                                 ev["sig"] = data.get("sig")
                                 events.append(ev)
                             else:
-                                events.append(data)
+                                ev = dict(data)
+                                ev["hash"] = line_hash
+                                events.append(ev)
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
@@ -231,24 +287,21 @@ class GatewayManager:
 
         # Reverse so newest are first
         events.reverse()
+        if limit is None:
+            return events[offset:]
         return events[offset : offset + limit]
 
     def get_metrics(self) -> dict[str, Any]:
-        """Compute real cumulative statistics from audit log."""
-        events = self.get_audit_events(limit=1000)
-        total_calls = len(events)
-        total_allowed = sum(1 for e in events if e.get("decision") in ("allow", "allow_once", "allow_and_persist"))
-        total_blocked = sum(1 for e in events if e.get("decision") in ("deny", "quarantine"))
-        total_prompted = sum(1 for e in events if e.get("decision") == "prompt")
-
-        return {
-            "total_calls": total_calls,
-            "total_allowed": total_allowed,
-            "total_blocked": total_blocked,
-            "total_prompted": total_prompted,
-            "active_agents_count": len(self._agents),
-            "quarantined_agents_count": len(self._quarantined_agents),
-        }
+        """Compute real cumulative statistics without full log parsing per request."""
+        with self._lock:
+            return {
+                "total_calls": self._metric_counters["total_calls"],
+                "total_allowed": self._metric_counters["total_allowed"],
+                "total_blocked": self._metric_counters["total_blocked"],
+                "total_prompted": self._metric_counters["total_prompted"],
+                "active_agents_count": len(self._agents),
+                "quarantined_agents_count": len(self._quarantined_agents),
+            }
 
     def verify_audit(self) -> dict[str, Any]:
         """Verify the cryptographic hash-chain of the audit log."""

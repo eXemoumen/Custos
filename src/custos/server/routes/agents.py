@@ -29,6 +29,8 @@ async def quarantine_agent(
 ) -> dict[str, Any]:
     """Quarantine an agent, instantly blocking all subsequent tool calls."""
     success = gw.quarantine_agent(agent_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
     return {"status": "quarantined", "agent_id": agent_id, "success": success}
 
 
@@ -39,4 +41,6 @@ async def release_agent(
 ) -> dict[str, Any]:
     """Release an agent from quarantine."""
     success = gw.release_agent(agent_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
     return {"status": "active", "agent_id": agent_id, "success": success}

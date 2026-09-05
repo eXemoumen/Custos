@@ -36,6 +36,7 @@ export default function KnowledgePage() {
   const [threats, setThreats] = useState<ThreatPattern[]>([]);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isRecompiling, setIsRecompiling] = useState(false);
 
   // Modals
@@ -79,13 +80,17 @@ export default function KnowledgePage() {
 
   const handleRecompile = async () => {
     setIsRecompiling(true);
+    setErrorMsg(null);
     try {
       const res = await api.recompileKB();
       setToastMsg(res.message);
       loadData();
       setTimeout(() => setToastMsg(null), 3500);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err);
+      const msg = err instanceof Error ? err.message : "Failed to recompile Knowledge Base";
+      setErrorMsg(msg);
+      setTimeout(() => setErrorMsg(null), 4500);
     } finally {
       setIsRecompiling(false);
     }
@@ -248,6 +253,12 @@ export default function KnowledgePage() {
           <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 px-4 py-3 rounded-xl text-xs flex items-center gap-2 animate-in fade-in">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
             <span>{toastMsg}</span>
+          </div>
+        )}
+        {errorMsg && (
+          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 px-4 py-3 rounded-xl text-xs flex items-center gap-2 animate-in fade-in">
+            <AlertOctagon className="w-4 h-4 text-rose-400 flex-shrink-0" />
+            <span>{errorMsg}</span>
           </div>
         )}
 
@@ -477,7 +488,7 @@ export default function KnowledgePage() {
                       <th className="pb-3 px-3">Rule Name</th>
                       <th className="pb-3 px-3">Plain English Directive</th>
                       <th className="pb-3 px-3">Fast Filter Keywords</th>
-                      <th className="pb-3 px-3">Action</th>
+                      <th className="pb-3 px-3">Enforcement</th>
                       <th className="pb-3 px-3 text-right">Action</th>
                     </tr>
                   </thead>
@@ -550,7 +561,7 @@ export default function KnowledgePage() {
                       <th className="pb-3 px-3">Signature Name</th>
                       <th className="pb-3 px-3">Regex Pattern</th>
                       <th className="pb-3 px-3">Threat Description</th>
-                      <th className="pb-3 px-3">Action</th>
+                      <th className="pb-3 px-3">Enforcement</th>
                       <th className="pb-3 px-3 text-right">Action</th>
                     </tr>
                   </thead>

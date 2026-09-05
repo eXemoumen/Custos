@@ -330,15 +330,17 @@ def _serve(parsed: argparse.Namespace) -> int:
         )
         return 1
 
+    token = parsed.token or os.getenv("CUSTOS_AUTH_TOKEN")
     cfg = ServerConfig(
         host=parsed.host,
         port=parsed.port,
-        auth_token=parsed.token or None,
+        auth_token=token or None,
         policy_path=Path(parsed.policy) if parsed.policy else None,
         audit_log_path=Path(parsed.audit) if parsed.audit else Path.home() / ".custos" / "audit.jsonl",
         kb_path=Path(parsed.kb) if parsed.kb else Path.home() / ".custos" / "knowledge_base.json",
         ollama_url=parsed.ollama_url or None,
         ollama_model=parsed.ollama_model,
+        hmac_key=os.getenv("CUSTOS_HMAC_KEY"),
     )
     app = create_app(cfg)
     print(f"Starting Custos Control Plane on http://{parsed.host}:{parsed.port}")

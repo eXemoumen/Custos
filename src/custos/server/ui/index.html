@@ -712,11 +712,24 @@
     let pendingPrompts = [];
     let ws = null;
 
+    // HTML Escaper helper
+    function esc(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     // Toast helper
     function showToast(msg, type = 'info') {
       const el = document.createElement('div');
       el.className = 'toast';
-      el.innerHTML = `<span>${msg}</span>`;
+      const span = document.createElement('span');
+      span.textContent = msg;
+      el.appendChild(span);
       document.getElementById('toasts').appendChild(el);
       setTimeout(() => el.remove(), 4000);
     }
@@ -819,23 +832,28 @@
       }
 
       container.innerHTML = pendingPrompts.map(p => {
-        const riskClass = p.risk >= 0.8 ? 'risk-critical' : p.risk >= 0.5 ? 'risk-high' : 'risk-mid';
+        const risk = typeof p.risk === 'number' ? p.risk : 0.5;
+        const riskClass = risk >= 0.8 ? 'risk-critical' : risk >= 0.5 ? 'risk-high' : 'risk-mid';
+        const reqId = esc(p.request_id);
+        const toolName = esc(p.tool);
+        const reasoning = esc(p.reasoning || 'Flagged by Custos security policy');
+        const argsStr = esc(JSON.stringify(p.args, null, 2));
         return `
           <div class="approval-card">
             <div class="approval-header">
               <div class="tool-badge">
                 <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                ${p.tool}
+                ${toolName}
               </div>
-              <div class="risk-pill ${riskClass}">Risk ${Math.round(p.risk * 100)}%</div>
+              <div class="risk-pill ${riskClass}">Risk ${Math.round(risk * 100)}%</div>
             </div>
-            <div class="reasoning-text"><strong>Security Context:</strong> ${p.reasoning || 'Flagged by Custos security policy'}</div>
-            <div class="args-box"><strong>Arguments:</strong><pre>${JSON.stringify(p.args, null, 2)}</pre></div>
+            <div class="reasoning-text"><strong>Security Context:</strong> ${reasoning}</div>
+            <div class="args-box"><strong>Arguments:</strong><pre>${argsStr}</pre></div>
             <div class="approval-actions">
-              <button class="btn btn-success" onclick="respondPrompt('${p.request_id}', 'allow')">✓ Allow</button>
-              <button class="btn btn-secondary" onclick="respondPrompt('${p.request_id}', 'allow_once')">Allow Once</button>
-              <button class="btn btn-danger" onclick="respondPrompt('${p.request_id}', 'deny')">✕ Deny</button>
-              <button class="btn btn-secondary" style="border-color: var(--accent-rose); color: var(--accent-rose);" onclick="respondPrompt('${p.request_id}', 'quarantine')">⊘ Quarantine Agent</button>
+              <button class="btn btn-success" onclick="respondPrompt('${reqId}', 'allow')">✓ Allow</button>
+              <button class="btn btn-secondary" onclick="respondPrompt('${reqId}', 'allow_once')">Allow Once</button>
+              <button class="btn btn-danger" onclick="respondPrompt('${reqId}', 'deny')">✕ Deny</button>
+              <button class="btn btn-secondary" style="border-color: var(--accent-rose); color: var(--accent-rose);" onclick="respondPrompt('${reqId}', 'quarantine')">⊘ Quarantine Agent</button>
             </div>
           </div>
         `;
@@ -844,7 +862,7 @@
 
     async function respondPrompt(requestId, choice) {
       try {
-        const res = await fetch(`/api/v1/prompts/${requestId}/respond`, {
+        const res = await fetch(`/api/v1/prompts/${encodeURIComponent(requestId)}/respond`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ choice: choice, approver: 'control_plane_admin' }),
@@ -853,6 +871,13 @@
           showToast(`Action '${choice}' submitted successfully.`);
           pendingPrompts = pendingPrompts.filter(p => p.request_id !== requestId);
           renderApprovals();
+        } else {
+          let errMsg = 'Failed to submit action';
+          try {
+            const errData = await res.json();
+            errMsg = errData.detail || errData.message || errMsg;
+          } catch(e) {}
+          showToast(`Error: ${errMsg}`, 'error');
         }
       } catch (err) {
         showToast(`Error: ${err.message}`, 'error');
@@ -874,34 +899,34 @@
         // Assets
         document.getElementById('assetsTableBody').innerHTML = assets.map(a => `
           <tr>
-            <td><strong>${a.name}</strong><br><small style="color:var(--text-muted);">${a.description || ''}</small></td>
-            <td><span class="tag" style="background:var(--bg-surface-elevated);">${a.asset_type}</span></td>
-            <td><code style="color:var(--accent-cyan); font-family:var(--font-mono);">${a.pattern}</code></td>
-            <td><span class="tag tag-${a.action}">${a.action}</span></td>
-            <td><span class="tag" style="color:var(--text-secondary);">${a.severity}</span></td>
-            <td><button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="deleteAsset('${a.id}')">Delete</button></td>
+            <td><strong>${esc(a.name)}</strong><br><small style="color:var(--text-muted);">${esc(a.description || '')}</small></td>
+            <td><span class="tag" style="background:var(--bg-surface-elevated);">${esc(a.asset_type)}</span></td>
+            <td><code style="color:var(--accent-cyan); font-family:var(--font-mono);">${esc(a.pattern)}</code></td>
+            <td><span class="tag tag-${esc(a.action)}">${esc(a.action)}</span></td>
+            <td><span class="tag" style="color:var(--text-secondary);">${esc(a.severity)}</span></td>
+            <td><button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="deleteAsset('${esc(a.id)}')">Delete</button></td>
           </tr>
         `).join('');
 
         // Rules
         document.getElementById('rulesTableBody').innerHTML = rules.map(r => `
           <tr>
-            <td><strong>${r.name}</strong></td>
-            <td style="max-width:300px; color:#cbd5e1;">${r.natural_language_rule}</td>
-            <td><code>${r.target_tools.join(', ')}</code></td>
-            <td><span class="tag tag-${r.action}">${r.action}</span></td>
-            <td><button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="deleteRule('${r.id}')">Delete</button></td>
+            <td><strong>${esc(r.name)}</strong></td>
+            <td style="max-width:300px; color:#cbd5e1;">${esc(r.natural_language_rule)}</td>
+            <td><code>${esc((r.target_tools || []).join(', '))}</code></td>
+            <td><span class="tag tag-${esc(r.action)}">${esc(r.action)}</span></td>
+            <td><button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="deleteRule('${esc(r.id)}')">Delete</button></td>
           </tr>
         `).join('');
 
         // Threats
         document.getElementById('threatsTableBody').innerHTML = threats.map(t => `
           <tr>
-            <td><strong>${t.name}</strong></td>
-            <td><code style="color:#f472b6;">${t.pattern}</code></td>
-            <td style="color:var(--text-secondary);">${t.description || ''}</td>
-            <td><span class="tag tag-${t.action}">${t.action}</span></td>
-            <td><button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="deleteThreat('${t.id}')">Delete</button></td>
+            <td><strong>${esc(t.name)}</strong></td>
+            <td><code style="color:#f472b6;">${esc(t.pattern)}</code></td>
+            <td style="color:var(--text-secondary);">${esc(t.description || '')}</td>
+            <td><span class="tag tag-${esc(t.action)}">${esc(t.action)}</span></td>
+            <td><button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="deleteThreat('${esc(t.id)}')">Delete</button></td>
           </tr>
         `).join('');
       } catch (err) { console.error(err); }
@@ -975,11 +1000,11 @@
         list.innerHTML = data.rules.map(r => `
           <div style="background:var(--bg-base); padding:0.75rem 1rem; border-radius:6px; border:1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center;">
             <div>
-              <span class="tag tag-${r.action}">${r.action}</span>
-              <span style="color:var(--accent-blue); margin-left:0.5rem;">match: ${JSON.stringify(r.match)}</span>
-              ${r.description ? `<span style="color:var(--text-muted); margin-left:0.5rem;">// ${r.description}</span>` : ''}
+              <span class="tag tag-${esc(r.action)}">${esc(r.action)}</span>
+              <span style="color:var(--accent-blue); margin-left:0.5rem;">match: ${esc(JSON.stringify(r.match))}</span>
+              ${r.description ? `<span style="color:var(--text-muted); margin-left:0.5rem;">// ${esc(r.description)}</span>` : ''}
             </div>
-            <small style="color:var(--text-muted);">${r.overlay_id || 'base'}</small>
+            <small style="color:var(--text-muted);">${esc(r.overlay_id || 'base')}</small>
           </div>
         `).join('');
       } catch (err) { console.error(err); }
@@ -993,11 +1018,11 @@
         const tbody = document.getElementById('auditTableBody');
         tbody.innerHTML = data.events.map(e => `
           <tr>
-            <td style="font-family:var(--font-mono); font-size:0.775rem; color:var(--text-muted);">${e.ts ? new Date(e.ts * 1000).toLocaleTimeString() : 'N/A'}</td>
-            <td><code>${e.tool || 'N/A'}</code></td>
-            <td><span class="tag tag-${e.decision}">${e.decision}</span></td>
+            <td style="font-family:var(--font-mono); font-size:0.775rem; color:var(--text-muted);">${e.ts ? esc(new Date(e.ts * 1000).toLocaleTimeString()) : 'N/A'}</td>
+            <td><code>${esc(e.tool || 'N/A')}</code></td>
+            <td><span class="tag tag-${esc(e.decision)}">${esc(e.decision)}</span></td>
             <td><span style="font-family:var(--font-mono);">${e.risk !== undefined ? (e.risk * 100).toFixed(0) + '%' : '-'}</span></td>
-            <td style="color:var(--text-secondary); max-width:350px;">${e.assistant_reasoning || e.policy_rule_id || '-'}</td>
+            <td style="color:var(--text-secondary); max-width:350px;">${esc(e.assistant_reasoning || e.policy_rule_id || '-')}</td>
           </tr>
         `).join('');
       } catch (err) { console.error(err); }
@@ -1043,7 +1068,9 @@
         box.style.background = 'rgba(244, 63, 94, 0.15)';
         box.style.border = '1px solid var(--accent-rose)';
         box.style.color = '#fda4af';
-        box.innerHTML = `<strong>✕ ACTION: ${result.action.toUpperCase()}</strong><br>Reasoning: ${result.reasoning}`;
+        const actionStr = esc((result.action || 'deny').toUpperCase());
+        const reasoningStr = esc(result.reasoning || 'Flagged by active security policy');
+        box.innerHTML = `<strong>✕ ACTION: ${actionStr}</strong><br>Reasoning: ${reasoningStr}`;
       }
     }
 

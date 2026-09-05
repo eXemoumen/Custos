@@ -54,14 +54,15 @@ class KnowledgeBaseCompiler:
 
         elif asset.asset_type == AssetType.IP_NETWORK or asset.asset_type == AssetType.DOMAIN:
             for pat in subpatterns:
+                clean_pat = pat.rstrip(".*") if asset.asset_type == AssetType.IP_NETWORK else pat
                 for tool_glob in ["http.*", "net.*", "curl*", "request*", "fetch*"]:
                     rules.append({
                         "match": {
                             "tool": tool_glob,
-                            "args": {"url": {"contains": pat}}
+                            "args": {"url": {"contains": clean_pat}}
                         },
                         "action": action_str,
-                        "description": f"KB Asset: {asset.name} ({pat})",
+                        "description": f"KB Asset: {asset.name} ({clean_pat})",
                     })
 
         elif asset.asset_type == AssetType.REGEX:

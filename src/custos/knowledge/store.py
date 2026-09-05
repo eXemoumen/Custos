@@ -67,7 +67,7 @@ DEFAULT_ASSETS: list[dict[str, Any]] = [
         "id": "asset-private-subnets",
         "name": "Internal Private Subnets",
         "asset_type": "ip_network",
-        "pattern": "10.*|192.168.*|172.16.*",
+        "pattern": "10.|192.168.|172.16.",
         "action": "prompt",
         "severity": "high",
         "description": "Requires human review when calling internal corporate IP ranges.",
@@ -144,21 +144,36 @@ class KnowledgeBaseStore:
         if self.path.exists():
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
-                self._assets = {
-                    a["id"]: SensitiveAsset.from_dict(a) for a in data.get("assets", [])
-                }
-                self._rules = {
-                    r["id"]: GuardrailRule.from_dict(r) for r in data.get("rules", [])
-                }
-                self._threats = {
-                    t["id"]: ThreatPattern.from_dict(t) for t in data.get("threats", [])
-                }
+                if not isinstance(data, dict):
+                    raise ValueError("Knowledge Base root must be a JSON object")
+                assets = {}
+                for a in data.get("assets", []):
+                    if not isinstance(a, dict) or "id" not in a:
+                        raise ValueError("Asset record missing 'id'")
+                    assets[a["id"]] = SensitiveAsset.from_dict(a)
+
+                rules = {}
+                for r in data.get("rules", []):
+                    if not isinstance(r, dict) or "id" not in r:
+                        raise ValueError("Rule record missing 'id'")
+                    rules[r["id"]] = GuardrailRule.from_dict(r)
+
+                threats = {}
+                for t in data.get("threats", []):
+                    if not isinstance(t, dict) or "id" not in t:
+                        raise ValueError("Threat record missing 'id'")
+                    threats[t["id"]] = ThreatPattern.from_dict(t)
+
+                self._assets = assets
+                self._rules = rules
+                self._threats = threats
                 logger.info("Loaded Knowledge Base from %s", self.path)
                 return
             except Exception as e:
-                logger.warning("Failed to load KB from %s: %s; using defaults", self.path, e)
+                logger.error("Failed to load existing KB from %s: %s", self.path, e)
+                raise RuntimeError(f"Failed to load existing Knowledge Base from {self.path}: {e}") from e
 
-        # Initialize defaults
+        # Truly absent file -> initialize defaults and persist
         self._assets = {
             a["id"]: SensitiveAsset.from_dict(a) for a in DEFAULT_ASSETS
         }

@@ -4,7 +4,19 @@ const BACKEND_BASE = process.env.CUSTOS_BACKEND_URL || "http://localhost:8000";
 
 async function proxy(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const { path } = await params;
-  const targetPath = `/api/${path.join("/")}`;
+  for (const segment of path) {
+    let decoded = segment;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return NextResponse.json({ error: "Invalid path segment encoding" }, { status: 400 });
+    }
+    if (decoded === ".." || decoded === "." || decoded.includes("/") || decoded.includes("\\")) {
+      return NextResponse.json({ error: "Invalid path traversal segment" }, { status: 400 });
+    }
+  }
+  const cleanSegments = path.map((s) => encodeURIComponent(decodeURIComponent(s)));
+  const targetPath = `/api/${cleanSegments.join("/")}`;
   const url = new URL(targetPath, BACKEND_BASE);
   url.search = request.nextUrl.search;
 

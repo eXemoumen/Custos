@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from custos.server.gateway_manager import GatewayManager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/invocations", tags=["Invocations"])
 
@@ -42,7 +46,8 @@ async def decide_invocation(
 ) -> DecideResponse:
     """Evaluate an agent tool invocation against the active policy, Knowledge Base, and approval pipeline."""
     try:
-        result = gw.decide(
+        result = await asyncio.to_thread(
+            gw.decide,
             tool=req.tool,
             args=req.args,
             user_id=req.user_id,
@@ -60,4 +65,5 @@ async def decide_invocation(
             audit_event=audit_dict,
         )
     except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
+        logger.exception("Error evaluating tool invocation: %s", err)
+        raise HTTPException(status_code=500, detail="Failed to evaluate tool invocation") from err

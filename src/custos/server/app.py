@@ -10,9 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from custos.schema import Decision
 from custos.server.config import ServerConfig
 from custos.server.gateway_manager import GatewayManager
-from custos.server.routes import agents, audit, health, invocations, knowledge, policies, prompts
+from custos.server.routes import agents, audit, health, invocations, knowledge, policies, prompts, settings
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     app.include_router(audit.router)
     app.include_router(health.router)
     app.include_router(agents.router)
+    app.include_router(settings.router)
 
     # WebSocket for real-time approvals
     @app.websocket("/ws/approvals")
@@ -64,13 +66,29 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
         try:
             while True:
                 # Keep connection alive and accept client response messages
-                data = await websocket.receive_json()
+                try:
+                    data = await websocket.receive_json()
+                except Exception as e:
+                    logger.debug("Malformed WebSocket message: %s", e)
+                    continue
+
+                if not isinstance(data, dict):
+                    continue
+
                 if data.get("type") == "respond":
                     req_id = data.get("request_id")
-                    choice = data.get("choice")
+                    choice_raw = data.get("choice")
                     approver = data.get("approver", "ws_user")
-                    if req_id and choice:
-                        gw.approval_manager.resolve_prompt(req_id, choice, approver)
+                    if not req_id or not choice_raw:
+                        continue
+
+                    try:
+                        choice = Decision(choice_raw)
+                    except ValueError:
+                        logger.warning("Invalid decision choice received over WebSocket: %r", choice_raw)
+                        continue
+
+                    gw.approval_manager.resolve_prompt(req_id, choice, approver)
         except WebSocketDisconnect:
             gw.approval_manager.disconnect(websocket)
         except Exception as err:

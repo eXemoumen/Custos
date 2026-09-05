@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { GuardrailTestResult, DecideResponse } from "@/lib/types";
@@ -38,6 +38,27 @@ export function TestGuardrailModal({ isOpen, onClose, onSuccess }: TestGuardrail
   const [liveResult, setLiveResult] = useState<DecideResponse | null>(null);
   const [dryrunResult, setDryrunResult] = useState<GuardrailTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const modalRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    if (modalRef.current) {
+      modalRef.current.focus();
+    }
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -97,7 +118,14 @@ export function TestGuardrailModal({ isOpen, onClose, onSuccess }: TestGuardrail
 
   return (
     <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="doppel-shell max-w-2xl w-full my-8 animate-in zoom-in-95 duration-150">
+      <div
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="simulation-workbench-title"
+        className="doppel-shell max-w-2xl w-full my-8 animate-in zoom-in-95 duration-150 outline-none"
+      >
         <div className="doppel-core p-6 flex flex-col gap-5">
           {/* Header */}
           <div className="flex items-center justify-between pb-4 border-b border-[var(--border-color)]">
@@ -107,7 +135,7 @@ export function TestGuardrailModal({ isOpen, onClose, onSuccess }: TestGuardrail
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-[var(--text-primary)] tracking-tight">
+                  <h3 id="simulation-workbench-title" className="text-base font-bold text-[var(--text-primary)] tracking-tight">
                     Custos Tool Simulation Workbench
                   </h3>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#facc15]/10 text-[#facc15] border border-[#facc15]/30 font-semibold">
@@ -265,20 +293,20 @@ export function TestGuardrailModal({ isOpen, onClose, onSuccess }: TestGuardrail
                 />
               </div>
 
-              {mode === "live" ? (
-                <div>
-                  <label className="text-xs font-semibold text-[var(--text-primary)] block mb-1">
-                    Calling Agent Identifier
-                  </label>
-                  <input
-                    value={agentId}
-                    onChange={(e) => setAgentId(e.target.value)}
-                    placeholder="e.g. agent-alpha-01, worker_bot"
-                    className="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl px-3.5 py-2.5 text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[#4f46e5]"
-                  />
-                </div>
-              ) : (
-                <div>
+              <div>
+                <label className="text-xs font-semibold text-[var(--text-primary)] block mb-1">
+                  Calling Agent Identifier
+                </label>
+                <input
+                  value={agentId}
+                  onChange={(e) => setAgentId(e.target.value)}
+                  placeholder="e.g. agent-alpha-01, worker_bot"
+                  className="w-full bg-[var(--bg-base)] border border-[var(--border-color)] rounded-xl px-3.5 py-2.5 text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[#4f46e5]"
+                />
+              </div>
+
+              {mode === "live" && (
+                <div className="sm:col-span-2">
                   <label className="text-xs font-semibold text-[var(--text-primary)] block mb-1">
                     Risk Tier (1 to 5)
                   </label>

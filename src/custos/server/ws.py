@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 from typing import Any
+import uuid
 
 from fastapi import WebSocket
 
@@ -106,7 +107,7 @@ class ServerApprovalManager:
 
     def submit_and_wait(self, req: PromptRequest) -> PromptResponse:
         """Submits a prompt request and blocks until a user responds or timeout expires."""
-        req_id = req.request_id or f"prompt-{int(time.time() * 1000)}"
+        req_id = req.request_id or f"prompt-{uuid.uuid4()}"
         event = threading.Event()
         result_holder: dict[str, Any] = {}
 

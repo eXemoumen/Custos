@@ -23,7 +23,7 @@ export default function DecisionsPage() {
   const [events, setEvents] = useState<AuditEventItem[]>([]);
   const [filter, setFilter] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
 
   const loadDecisions = () => {
@@ -141,16 +141,17 @@ export default function DecisionsPage() {
             ) : (
               filtered.map((item, idx) => {
                 const badge = getDecisionBadge(item.decision);
-                const isExpanded = expandedId === idx;
                 const ts = item.ts_unix_ms || (item.ts ? item.ts * 1000 : Date.now());
+                const rowId = (item as any).id || item.hash || `${ts}-${item.tool || "event"}-${idx}`;
+                const isExpanded = expandedId === rowId;
 
                 return (
                   <div
-                    key={idx}
+                    key={rowId}
                     className="border-b border-[#334155]/50 last:border-0 py-3.5 flex flex-col gap-2"
                   >
                     <div
-                      onClick={() => setExpandedId(isExpanded ? null : idx)}
+                      onClick={() => setExpandedId(isExpanded ? null : rowId)}
                       className="flex items-center justify-between cursor-pointer group"
                     >
                       <div className="flex items-center gap-3">

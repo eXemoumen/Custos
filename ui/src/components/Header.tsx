@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { RefreshCw, Play, Settings } from "lucide-react";
+import { useConnection } from "@/lib/connection";
 
 interface HeaderProps {
   title: string;
@@ -10,6 +11,7 @@ interface HeaderProps {
   onRecompile?: () => void;
   onOpenTestModal?: () => void;
   isRecompiling?: boolean;
+  isWsConnected?: boolean;
 }
 
 export function Header({
@@ -19,7 +21,11 @@ export function Header({
   onRecompile,
   onOpenTestModal,
   isRecompiling = false,
+  isWsConnected: isWsConnectedProp,
 }: HeaderProps) {
+  const { isWsConnected: isWsConnectedContext } = useConnection();
+  const isWsConnected = isWsConnectedProp !== undefined ? isWsConnectedProp : isWsConnectedContext;
+
   return (
     <header className="px-8 py-4 border-b border-[var(--border-color)] bg-[var(--bg-base)]/85 backdrop-blur-xl sticky top-0 z-10 flex items-center justify-between">
       <div>
@@ -34,12 +40,24 @@ export function Header({
 
       <div className="flex items-center gap-3">
         {/* System Protected Pill from ASCII Diagram */}
-        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#10b981]/10 border border-[#10b981]/30 text-[#10b981] text-xs font-mono font-semibold">
+        <div
+          className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono font-semibold border transition-all ${
+            isWsConnected
+              ? "bg-[#10b981]/10 border-[#10b981]/30 text-[#10b981]"
+              : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+          }`}
+        >
           <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10b981] opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-[#10b981]" />
+            {isWsConnected && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10b981] opacity-75" />
+            )}
+            <span
+              className={`relative inline-flex rounded-full h-2 w-2 ${
+                isWsConnected ? "bg-[#10b981]" : "bg-rose-500"
+              }`}
+            />
           </span>
-          <span>System Protected</span>
+          <span>{isWsConnected ? "System Protected" : "Gateway Offline"}</span>
         </div>
 
         {onRecompile && (

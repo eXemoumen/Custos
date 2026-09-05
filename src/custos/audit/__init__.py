@@ -79,7 +79,7 @@ class FileAuditSink(AuditSink):
 
     def emit(self, event: AuditEvent) -> None:
         line = json.dumps(event.to_dict(), sort_keys=True, default=_json_default)
-        with open(self.path, "a", encoding="utf-8") as fh:
+        with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
             fh.write(line)
             fh.write("\n")
 
@@ -228,7 +228,7 @@ class HashChainedAuditSink(AuditSink):
                 ).hexdigest()
                 envelope["sig"] = sig
             line = json.dumps(envelope, sort_keys=True, default=_json_default)
-            with open(self.path, "a", encoding="utf-8") as fh:
+            with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
                 fh.write(line)
                 fh.write("\n")
             # Cache the hash of the line we just wrote for the next emit.
@@ -291,6 +291,7 @@ def verify_chain(
     with open(path, "rb") as fh:
         raw = fh.read()
     for line_no, raw_line in enumerate(raw.split(b"\n"), start=1):
+        raw_line = raw_line.rstrip(b"\r")
         if not raw_line.strip():
             continue
         line_count += 1

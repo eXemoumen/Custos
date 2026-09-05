@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Custos // Autonomous Agent Security Control Plane</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #0a0e17;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1a2234;
+      --bg-surface-glass: rgba(22, 30, 46, 0.75);
+      --border-subtle: #1e293b;
+      --border-focus: #3b82f6;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent-emerald: #10b981;
+      --accent-emerald-glow: rgba(16, 185, 129, 0.2);
+      --accent-rose: #f43f5e;
+      --accent-rose-glow: rgba(244, 63, 94, 0.2);
+      --accent-amber: #f59e0b;
+      --accent-amber-glow: rgba(245, 158, 11, 0.2);
+      --accent-cyan: #06b6d4;
+      --accent-blue: #3b82f6;
+      --accent-purple: #8b5cf6;
+      --font-main: 'Outfit', -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-main);
+      min-height: 100vh;
+      display: flex;
+      overflow-x: hidden;
+    }
+
+    /* Sidebar */
+    aside {
+      width: 260px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+
+    .brand {
+      padding: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-space(135deg, var(--accent-cyan), var(--accent-blue));
+      background: linear-gradient(135deg, #06b6d4, #3b82f6);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: #fff;
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.3);
+    }
+
+    .brand-text h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em; }
+    .brand-text p { font-size: 0.75rem; color: var(--accent-cyan); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+
+    nav { padding: 1.25rem 0.75rem; display: flex; flex-direction: column; gap: 0.35rem; flex: 1; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 0.925rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+
+    .nav-item:hover { background: var(--bg-surface-elevated); color: var(--text-primary); }
+    .nav-item.active { background: rgba(59, 130, 246, 0.15); color: var(--accent-blue); font-weight: 600; border-left: 3px solid var(--accent-blue); }
+
+    .nav-badge {
+      margin-left: auto;
+      background: var(--accent-amber);
+      color: #000;
+      font-weight: 700;
+      font-size: 0.75rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      display: none;
+    }
+
+    .sidebar-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--border-subtle);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      box-shadow: 0 0 8px var(--accent-emerald);
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    /* Main Content */
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    header {
+      padding: 1.25rem 2rem;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-surface-glass);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .header-title h2 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.01em; }
+    .header-title p { font-size: 0.85rem; color: var(--text-secondary); }
+
+    .header-actions { display: flex; align-items: center; gap: 0.75rem; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.55rem 1.15rem;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+      font-family: var(--font-main);
+    }
+
+    .btn-primary { background: var(--accent-blue); color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-success { background: var(--accent-emerald); color: #000; font-weight: 700; }
+    .btn-success:hover { filter: brightness(1.1); }
+    .btn-danger { background: var(--accent-rose); color: #fff; }
+    .btn-danger:hover { filter: brightness(1.1); }
+    .btn-secondary { background: var(--bg-surface-elevated); color: var(--text-primary); border-color: var(--border-subtle); }
+    .btn-secondary:hover { background: #243048; }
+
+    .content-container { padding: 2rem; display: flex; flex-direction: column; gap: 1.75rem; }
+
+    /* Cards & Grids */
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 1.25rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.4), transparent);
+    }
+
+    .card-title { font-size: 0.825rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
+    .card-value { font-size: 1.85rem; font-weight: 700; margin: 0.4rem 0 0.2rem; font-family: var(--font-mono); }
+    .card-subtitle { font-size: 0.775rem; color: var(--text-muted); }
+
+    /* Tabs View */
+    .view-pane { display: none; }
+    .view-pane.active { display: block; }
+
+    /* Live Approvals Inbox */
+    .approval-queue { display: flex; flex-direction: column; gap: 1.25rem; }
+    .approval-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--accent-amber);
+      box-shadow: 0 0 20px var(--accent-amber-glow);
+      border-radius: 12px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .approval-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .tool-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #93c5fd;
+      padding: 0.3rem 0.75rem;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+
+    .risk-pill {
+      font-size: 0.775rem;
+      font-weight: 700;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+    }
+
+    .risk-critical { background: var(--accent-rose); color: #fff; box-shadow: 0 0 10px var(--accent-rose-glow); }
+    .risk-high { background: var(--accent-amber); color: #000; box-shadow: 0 0 10px var(--accent-amber-glow); }
+    .risk-mid { background: #eab308; color: #000; }
+    .risk-low { background: var(--accent-emerald); color: #000; }
+
+    .args-box {
+      background: var(--bg-base);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 0.85rem;
+      font-family: var(--font-mono);
+      font-size: 0.825rem;
+      color: #e2e8f0;
+      overflow-x: auto;
+      max-height: 180px;
+    }
+
+    .reasoning-text { font-size: 0.9rem; color: #cbd5e1; line-height: 1.4; }
+
+    .approval-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 1rem;
+    }
+
+    /* Knowledge Base Tables */
+    .kb-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.5rem; }
+    .kb-tab {
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+    .kb-tab.active { background: var(--bg-surface-elevated); color: var(--accent-cyan); }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.875rem;
+    }
+
+    .data-table th {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+    }
+
+    .data-table td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-primary);
+    }
+
+    .data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
+
+    .tag {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+    .tag-deny { background: rgba(244, 63, 94, 0.15); color: #fda4af; border: 1px solid rgba(244, 63, 94, 0.3); }
+    .tag-prompt { background: rgba(245, 158, 11, 0.15); color: #fde68a; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .tag-quarantine { background: rgba(139, 92, 246, 0.15); color: #d8b4fe; border: 1px solid rgba(139, 92, 246, 0.3); }
+    .tag-allow { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.3); }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 1.75rem;
+      width: 100%;
+      max-width: 520px;
+    }
+    .modal h3 { font-size: 1.25rem; font-weight: 700; margin-bottom: 1rem; }
+    .form-group { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+    .form-group label { font-size: 0.825rem; color: var(--text-secondary); font-weight: 500; }
+    .form-control {
+      background: var(--bg-base);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 0.6rem 0.85rem;
+      color: #fff;
+      font-family: var(--font-main);
+      font-size: 0.9rem;
+    }
+    .form-control:focus { outline: none; border-color: var(--accent-blue); }
+
+    /* Toasts */
+    #toasts {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      z-index: 200;
+    }
+    .toast {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 0.85rem 1.25rem;
+      color: #fff;
+      font-size: 0.875rem;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      animation: slideIn 0.2s ease;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <aside>
+    <div class="brand">
+      <div class="brand-logo">C</div>
+      <div class="brand-text">
+        <h1>Custos</h1>
+        <p>Control Plane</p>
+      </div>
+    </div>
+    <nav>
+      <div class="nav-item active" onclick="switchView('dashboard')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+        Dashboard
+      </div>
+      <div class="nav-item" onclick="switchView('approvals')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+        Live Approvals
+        <span id="pendingBadge" class="nav-badge">0</span>
+      </div>
+      <div class="nav-item" onclick="switchView('knowledge')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg>
+        Knowledge Base
+      </div>
+      <div class="nav-item" onclick="switchView('policies')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        Policy Studio
+      </div>
+      <div class="nav-item" onclick="switchView('audit')">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Audit Explorer
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div><span id="wsStatusDot" class="status-dot"></span> Live Gateway</div>
+      <div id="appVersion" style="font-family: var(--font-mono);">v1.1.1</div>
+    </div>
+  </aside>
+
+  <!-- Main Area -->
+  <main>
+    <header>
+      <div class="header-title">
+        <h2 id="viewTitle">Dashboard Overview</h2>
+        <p id="viewSubtitle">Autonomous agent governance and threat prevention</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-secondary" onclick="triggerRecompile()">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+          Recompile KB
+        </button>
+        <button class="btn btn-primary" onclick="openTestModal()">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Test Guardrail
+        </button>
+      </div>
+    </header>
+
+    <div class="content-container">
+
+      <!-- View: Dashboard -->
+      <section id="view-dashboard" class="view-pane active">
+        <div class="metric-grid">
+          <div class="card">
+            <div class="card-title">Pending Approvals</div>
+            <div id="metricPending" class="card-value" style="color: var(--accent-amber);">0</div>
+            <div class="card-subtitle">Tool calls held for human review</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Active Policy Rules</div>
+            <div id="metricRules" class="card-value" style="color: var(--accent-blue);">-</div>
+            <div class="card-subtitle">Deterministic ABAC & glob rules</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Protected Assets</div>
+            <div id="metricAssets" class="card-value" style="color: var(--accent-cyan);">-</div>
+            <div class="card-subtitle">Sensitive files, networks & tables</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Threat Patterns</div>
+            <div id="metricThreats" class="card-value" style="color: var(--accent-purple);">-</div>
+            <div class="card-subtitle">IPI & prompt injection signatures</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 1.5rem;" class="card">
+          <h3 style="font-size: 1.1rem; margin-bottom: 0.75rem;">System Architecture & Protection Status</h3>
+          <p style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.6;">
+            Custos is actively intercepting agent tool invocations through the 6-stage deterministic pipeline. 
+            All calls evaluate your <strong>Knowledge Base Guardrails</strong> and <strong>Sensitive Asset Boundaries</strong> first.
+            Any unresolved or high-risk actions are dispatched in real-time to the Live Approvals inbox below.
+          </p>
+        </div>
+      </section>
+
+      <!-- View: Live Approvals -->
+      <section id="view-approvals" class="view-pane">
+        <div id="approvalContainer" class="approval-queue">
+          <div style="text-align: center; padding: 4rem 1rem; color: var(--text-muted);">
+            <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom: 0.5rem;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+            <p>No tool invocations awaiting approval.</p>
+            <p style="font-size: 0.8rem; margin-top: 0.25rem;">When an agent calls a sensitive tool, it will appear here in real-time.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- View: Knowledge Base -->
+      <section id="view-knowledge" class="view-pane">
+        <div class="card">
+          <div class="kb-tabs">
+            <div class="kb-tab active" onclick="switchKbTab('assets')">Sensitive Assets</div>
+            <div class="kb-tab" onclick="switchKbTab('rules')">Natural Language Rules</div>
+            <div class="kb-tab" onclick="switchKbTab('threats')">Threat Signatures</div>
+          </div>
+
+          <!-- Tab: Assets -->
+          <div id="kb-pane-assets">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+              <p style="font-size: 0.85rem; color: var(--text-secondary);">Define sensitive paths, IPs, tables, or secrets agents cannot touch.</p>
+              <button class="btn btn-primary" style="padding: 0.35rem 0.85rem; font-size: 0.8rem;" onclick="openAddAssetModal()">+ Add Asset</button>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Asset Name</th>
+                  <th>Type</th>
+                  <th>Pattern</th>
+                  <th>Action</th>
+                  <th>Severity</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="assetsTableBody"></tbody>
+            </table>
+          </div>
+
+          <!-- Tab: Rules -->
+          <div id="kb-pane-rules" style="display: none;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+              <p style="font-size: 0.85rem; color: var(--text-secondary);">Natural language safety policies enforced via deterministic keywords and local LLM.</p>
+              <button class="btn btn-primary" style="padding: 0.35rem 0.85rem; font-size: 0.8rem;" onclick="openAddRuleModal()">+ Add Rule</button>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Rule Name</th>
+                  <th>Policy Description</th>
+                  <th>Target Tools</th>
+                  <th>Action</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="rulesTableBody"></tbody>
+            </table>
+          </div>
+
+          <!-- Tab: Threats -->
+          <div id="kb-pane-threats" style="display: none;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+              <p style="font-size: 0.85rem; color: var(--text-secondary);">Injection detection patterns and honeypot tokens (triggers Quarantine).</p>
+              <button class="btn btn-primary" style="padding: 0.35rem 0.85rem; font-size: 0.8rem;" onclick="openAddThreatModal()">+ Add Threat</button>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Pattern Name</th>
+                  <th>Regex / Pattern</th>
+                  <th>Description</th>
+                  <th>Action</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="threatsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- View: Policy Studio -->
+      <section id="view-policies" class="view-pane">
+        <div class="card">
+          <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Compiled Active Ruleset</h3>
+          <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1.25rem;">
+            Deterministic first-match-wins rules compiled from base policy and Knowledge Base overlays.
+          </p>
+          <div id="policyRulesList" style="display: flex; flex-direction: column; gap: 0.5rem; font-family: var(--font-mono); font-size: 0.825rem;"></div>
+        </div>
+      </section>
+
+      <!-- View: Audit Explorer -->
+      <section id="view-audit" class="view-pane">
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <div>
+              <h3 style="font-size: 1.1rem;">Tamper-Evident Audit Timeline</h3>
+              <p style="font-size: 0.85rem; color: var(--text-secondary);">Append-only hash-chained ledger of every tool decision</p>
+            </div>
+            <button class="btn btn-secondary" onclick="verifyAuditTrail()">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+              Verify Hash Chain
+            </button>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Tool</th>
+                <th>Decision</th>
+                <th>Risk</th>
+                <th>Reasoning</th>
+              </tr>
+            </thead>
+            <tbody id="auditTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Modals -->
+  <!-- Modal: Test Guardrail -->
+  <div id="testModal" class="modal-overlay">
+    <div class="modal">
+      <h3>Test Tool Against Guardrails</h3>
+      <div class="form-group">
+        <label>Tool Name</label>
+        <input id="testToolInput" class="form-control" value="shell.exec" placeholder="e.g. fs.read, shell.exec, db.query">
+      </div>
+      <div class="form-group">
+        <label>Arguments (JSON)</label>
+        <textarea id="testArgsInput" class="form-control" rows="3">{"command": "cat /etc/shadow"}</textarea>
+      </div>
+      <div id="testResultBox" style="display:none; margin: 1rem 0; padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.85rem;"></div>
+      <div style="display:flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
+        <button class="btn btn-secondary" onclick="closeModal('testModal')">Close</button>
+        <button class="btn btn-primary" onclick="executeTestGuardrail()">Evaluate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add Asset -->
+  <div id="addAssetModal" class="modal-overlay">
+    <div class="modal">
+      <h3>Add Sensitive Protected Asset</h3>
+      <div class="form-group">
+        <label>Asset Name</label>
+        <input id="assetNameInput" class="form-control" placeholder="e.g. Production Database">
+      </div>
+      <div class="form-group">
+        <label>Asset Type</label>
+        <select id="assetTypeInput" class="form-control">
+          <option value="file_path">File Path Pattern</option>
+          <option value="ip_network">IP / Network CIDR</option>
+          <option value="domain">Domain</option>
+          <option value="db_table">Database Table</option>
+          <option value="regex">Regex Pattern</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Pattern</label>
+        <input id="assetPatternInput" class="form-control" placeholder="e.g. */.env* or 10.0.0.0/8">
+      </div>
+      <div class="form-group">
+        <label>Action If Accessed</label>
+        <select id="assetActionInput" class="form-control">
+          <option value="deny">Deny (Hard Block)</option>
+          <option value="prompt">Prompt (Human Review)</option>
+        </select>
+      </div>
+      <div style="display:flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
+        <button class="btn btn-secondary" onclick="closeModal('addAssetModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddAsset()">Save Asset</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add Rule -->
+  <div id="addRuleModal" class="modal-overlay">
+    <div class="modal">
+      <h3>Add Natural Language Rule</h3>
+      <div class="form-group">
+        <label>Rule Name</label>
+        <input id="ruleNameInput" class="form-control" placeholder="e.g. Financial Transfer Guard">
+      </div>
+      <div class="form-group">
+        <label>Natural Language Policy</label>
+        <textarea id="rulePolicyInput" class="form-control" rows="3" placeholder="e.g. Agent must never transfer money over $100 without human confirmation."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Keywords (comma-separated for fast match)</label>
+        <input id="ruleKeywordsInput" class="form-control" placeholder="e.g. transfer, pay, charge, balance">
+      </div>
+      <div class="form-group">
+        <label>Action</label>
+        <select id="ruleActionInput" class="form-control">
+          <option value="prompt">Prompt (Require Approval)</option>
+          <option value="deny">Deny (Block)</option>
+        </select>
+      </div>
+      <div style="display:flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
+        <button class="btn btn-secondary" onclick="closeModal('addRuleModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddRule()">Save Rule</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+
+  <script>
+    let activeView = 'dashboard';
+    let pendingPrompts = [];
+    let ws = null;
+
+    // Toast helper
+    function showToast(msg, type = 'info') {
+      const el = document.createElement('div');
+      el.className = 'toast';
+      el.innerHTML = `<span>${msg}</span>`;
+      document.getElementById('toasts').appendChild(el);
+      setTimeout(() => el.remove(), 4000);
+    }
+
+    // View switcher
+    function switchView(viewName) {
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.view-pane').forEach(el => el.classList.remove('active'));
+
+      activeView = viewName;
+      const targetPane = document.getElementById(`view-${viewName}`);
+      if (targetPane) targetPane.classList.add('active');
+
+      const titles = {
+        dashboard: ['Dashboard Overview', 'Autonomous agent governance and threat prevention'],
+        approvals: ['Live Human-in-the-Loop Approvals', 'Pending tool executions requiring your authorization'],
+        knowledge: ['Knowledge Base Guardrails', 'Define sensitive assets, organizational policies, and threat markers'],
+        policies: ['Policy Studio', 'Inspect active compiled ABAC rules and dry-run matching'],
+        audit: ['Audit Timeline & Forensics', 'Tamper-evident, hash-chained ledger of every tool invocation'],
+      };
+
+      if (titles[viewName]) {
+        document.getElementById('viewTitle').textContent = titles[viewName][0];
+        document.getElementById('viewSubtitle').textContent = titles[viewName][1];
+      }
+
+      if (viewName === 'knowledge') loadKnowledgeData();
+      if (viewName === 'policies') loadPolicyData();
+      if (viewName === 'audit') loadAuditData();
+      if (viewName === 'dashboard') loadDashboardMetrics();
+    }
+
+    function switchKbTab(tabName) {
+      document.querySelectorAll('.kb-tab').forEach(el => el.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById('kb-pane-assets').style.display = tabName === 'assets' ? 'block' : 'none';
+      document.getElementById('kb-pane-rules').style.display = tabName === 'rules' ? 'block' : 'none';
+      document.getElementById('kb-pane-threats').style.display = tabName === 'threats' ? 'block' : 'none';
+    }
+
+    // Modal Helpers
+    function openTestModal() { document.getElementById('testModal').classList.add('active'); }
+    function openAddAssetModal() { document.getElementById('addAssetModal').classList.add('active'); }
+    function openAddRuleModal() { document.getElementById('addRuleModal').classList.add('active'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+    // WebSocket setup
+    function initWebSocket() {
+      const loc = window.location;
+      const wsUrl = (loc.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + loc.host + '/ws/approvals';
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        document.getElementById('wsStatusDot').style.background = 'var(--accent-emerald)';
+        document.getElementById('wsStatusDot').style.boxShadow = '0 0 8px var(--accent-emerald)';
+      };
+
+      ws.onclose = () => {
+        document.getElementById('wsStatusDot').style.background = 'var(--accent-rose)';
+        document.getElementById('wsStatusDot').style.boxShadow = '0 0 8px var(--accent-rose)';
+        setTimeout(initWebSocket, 3000);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'initial_state') {
+            pendingPrompts = msg.pending_prompts || [];
+            renderApprovals();
+          } else if (msg.type === 'prompt_requested') {
+            pendingPrompts.unshift(msg.data);
+            renderApprovals();
+            showToast(`⚠️ Approval Required: ${msg.data.tool}`, 'warning');
+          } else if (msg.type === 'prompt_resolved' || msg.type === 'prompt_timed_out') {
+            pendingPrompts = pendingPrompts.filter(p => p.request_id !== msg.request_id);
+            renderApprovals();
+          }
+        } catch (e) { console.error(e); }
+      };
+    }
+
+    // Render Approvals Queue
+    function renderApprovals() {
+      const container = document.getElementById('approvalContainer');
+      const badge = document.getElementById('pendingBadge');
+      const metricPending = document.getElementById('metricPending');
+
+      badge.textContent = pendingPrompts.length;
+      badge.style.display = pendingPrompts.length > 0 ? 'inline-block' : 'none';
+      if (metricPending) metricPending.textContent = pendingPrompts.length;
+
+      if (pendingPrompts.length === 0) {
+        container.innerHTML = `
+          <div style="text-align: center; padding: 4rem 1rem; color: var(--text-muted);">
+            <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="margin-bottom: 0.5rem;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+            <p>No tool invocations awaiting approval.</p>
+            <p style="font-size: 0.8rem; margin-top: 0.25rem;">When an agent calls a sensitive tool, it will appear here in real-time.</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = pendingPrompts.map(p => {
+        const riskClass = p.risk >= 0.8 ? 'risk-critical' : p.risk >= 0.5 ? 'risk-high' : 'risk-mid';
+        return `
+          <div class="approval-card">
+            <div class="approval-header">
+              <div class="tool-badge">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                ${p.tool}
+              </div>
+              <div class="risk-pill ${riskClass}">Risk ${Math.round(p.risk * 100)}%</div>
+            </div>
+            <div class="reasoning-text"><strong>Security Context:</strong> ${p.reasoning || 'Flagged by Custos security policy'}</div>
+            <div class="args-box"><strong>Arguments:</strong><pre>${JSON.stringify(p.args, null, 2)}</pre></div>
+            <div class="approval-actions">
+              <button class="btn btn-success" onclick="respondPrompt('${p.request_id}', 'allow')">✓ Allow</button>
+              <button class="btn btn-secondary" onclick="respondPrompt('${p.request_id}', 'allow_once')">Allow Once</button>
+              <button class="btn btn-danger" onclick="respondPrompt('${p.request_id}', 'deny')">✕ Deny</button>
+              <button class="btn btn-secondary" style="border-color: var(--accent-rose); color: var(--accent-rose);" onclick="respondPrompt('${p.request_id}', 'quarantine')">⊘ Quarantine Agent</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function respondPrompt(requestId, choice) {
+      try {
+        const res = await fetch(`/api/v1/prompts/${requestId}/respond`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ choice: choice, approver: 'control_plane_admin' }),
+        });
+        if (res.ok) {
+          showToast(`Action '${choice}' submitted successfully.`);
+          pendingPrompts = pendingPrompts.filter(p => p.request_id !== requestId);
+          renderApprovals();
+        }
+      } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+      }
+    }
+
+    // Load Knowledge Base
+    async function loadKnowledgeData() {
+      try {
+        const [assetsRes, rulesRes, threatsRes] = await Promise.all([
+          fetch('/api/v1/knowledge/assets'),
+          fetch('/api/v1/knowledge/rules'),
+          fetch('/api/v1/knowledge/threats'),
+        ]);
+        const assets = await assetsRes.json();
+        const rules = await rulesRes.json();
+        const threats = await threatsRes.json();
+
+        // Assets
+        document.getElementById('assetsTableBody').innerHTML = assets.map(a => `
+          <tr>
+            <td><strong>${a.name}</strong><br><small style="color:var(--text-muted);">${a.description || ''}</small></td>
+            <td><span class="tag" style="background:var(--bg-surface-elevated);">${a.asset_type}</span></td>
+            <td><code style="color:var(--accent-cyan); font-family:var(--font-mono);">${a.pattern}</code></td>
+            <td><span class="tag tag-${a.action}">${a.action}</span></td>
+            <td><span class="tag" style="color:var(--text-secondary);">${a.severity}</span></td>
+            <td><button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="deleteAsset('${a.id}')">Delete</button></td>
+          </tr>
+        `).join('');
+
+        // Rules
+        document.getElementById('rulesTableBody').innerHTML = rules.map(r => `
+          <tr>
+            <td><strong>${r.name}</strong></td>
+            <td style="max-width:300px; color:#cbd5e1;">${r.natural_language_rule}</td>
+            <td><code>${r.target_tools.join(', ')}</code></td>
+            <td><span class="tag tag-${r.action}">${r.action}</span></td>
+            <td><button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="deleteRule('${r.id}')">Delete</button></td>
+          </tr>
+        `).join('');
+
+        // Threats
+        document.getElementById('threatsTableBody').innerHTML = threats.map(t => `
+          <tr>
+            <td><strong>${t.name}</strong></td>
+            <td><code style="color:#f472b6;">${t.pattern}</code></td>
+            <td style="color:var(--text-secondary);">${t.description || ''}</td>
+            <td><span class="tag tag-${t.action}">${t.action}</span></td>
+            <td><button class="btn btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.75rem;" onclick="deleteThreat('${t.id}')">Delete</button></td>
+          </tr>
+        `).join('');
+      } catch (err) { console.error(err); }
+    }
+
+    async function deleteAsset(id) {
+      if (confirm('Delete this asset?')) {
+        await fetch(`/api/v1/knowledge/assets/${id}`, { method: 'DELETE' });
+        loadKnowledgeData();
+        showToast('Asset deleted.');
+      }
+    }
+
+    async function deleteRule(id) {
+      if (confirm('Delete this rule?')) {
+        await fetch(`/api/v1/knowledge/rules/${id}`, { method: 'DELETE' });
+        loadKnowledgeData();
+        showToast('Rule deleted.');
+      }
+    }
+
+    async function deleteThreat(id) {
+      if (confirm('Delete this threat pattern?')) {
+        await fetch(`/api/v1/knowledge/threats/${id}`, { method: 'DELETE' });
+        loadKnowledgeData();
+        showToast('Threat deleted.');
+      }
+    }
+
+    async function submitAddAsset() {
+      const payload = {
+        name: document.getElementById('assetNameInput').value,
+        asset_type: document.getElementById('assetTypeInput').value,
+        pattern: document.getElementById('assetPatternInput').value,
+        action: document.getElementById('assetActionInput').value,
+      };
+      await fetch('/api/v1/knowledge/assets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      closeModal('addAssetModal');
+      loadKnowledgeData();
+      showToast('Asset added and policy recompiled!');
+    }
+
+    async function submitAddRule() {
+      const kws = document.getElementById('ruleKeywordsInput').value.split(',').map(s => s.trim()).filter(Boolean);
+      const payload = {
+        name: document.getElementById('ruleNameInput').value,
+        natural_language_rule: document.getElementById('rulePolicyInput').value,
+        keywords: kws,
+        action: document.getElementById('ruleActionInput').value,
+      };
+      await fetch('/api/v1/knowledge/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      closeModal('addRuleModal');
+      loadKnowledgeData();
+      showToast('Rule added and policy recompiled!');
+    }
+
+    // Policy Data
+    async function loadPolicyData() {
+      try {
+        const res = await fetch('/api/v1/policies');
+        const data = await res.json();
+        const list = document.getElementById('policyRulesList');
+        list.innerHTML = data.rules.map(r => `
+          <div style="background:var(--bg-base); padding:0.75rem 1rem; border-radius:6px; border:1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <span class="tag tag-${r.action}">${r.action}</span>
+              <span style="color:var(--accent-blue); margin-left:0.5rem;">match: ${JSON.stringify(r.match)}</span>
+              ${r.description ? `<span style="color:var(--text-muted); margin-left:0.5rem;">// ${r.description}</span>` : ''}
+            </div>
+            <small style="color:var(--text-muted);">${r.overlay_id || 'base'}</small>
+          </div>
+        `).join('');
+      } catch (err) { console.error(err); }
+    }
+
+    // Audit Data
+    async function loadAuditData() {
+      try {
+        const res = await fetch('/api/v1/audit?limit=25');
+        const data = await res.json();
+        const tbody = document.getElementById('auditTableBody');
+        tbody.innerHTML = data.events.map(e => `
+          <tr>
+            <td style="font-family:var(--font-mono); font-size:0.775rem; color:var(--text-muted);">${e.ts ? new Date(e.ts * 1000).toLocaleTimeString() : 'N/A'}</td>
+            <td><code>${e.tool || 'N/A'}</code></td>
+            <td><span class="tag tag-${e.decision}">${e.decision}</span></td>
+            <td><span style="font-family:var(--font-mono);">${e.risk !== undefined ? (e.risk * 100).toFixed(0) + '%' : '-'}</span></td>
+            <td style="color:var(--text-secondary); max-width:350px;">${e.assistant_reasoning || e.policy_rule_id || '-'}</td>
+          </tr>
+        `).join('');
+      } catch (err) { console.error(err); }
+    }
+
+    async function verifyAuditTrail() {
+      try {
+        const res = await fetch('/api/v1/audit/verify', { method: 'POST' });
+        const result = await res.json();
+        if (result.verified) {
+          showToast(`🛡️ Hash-Chain Verified: ${result.message}`, 'success');
+        } else {
+          showToast(`⚠️ Verification Alert: ${result.error || 'Broken Chain'}`, 'error');
+        }
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    async function triggerRecompile() {
+      await fetch('/api/v1/knowledge/compile', { method: 'POST' });
+      showToast('Knowledge Base recompiled into active policy!');
+    }
+
+    // Test Guardrail Modal
+    async function executeTestGuardrail() {
+      const tool = document.getElementById('testToolInput').value;
+      let args = {};
+      try { args = JSON.parse(document.getElementById('testArgsInput').value); } catch(e){}
+
+      const res = await fetch('/api/v1/knowledge/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: tool, args: args }),
+      });
+      const result = await res.json();
+      const box = document.getElementById('testResultBox');
+      box.style.display = 'block';
+      if (result.allowed) {
+        box.style.background = 'rgba(16, 185, 129, 0.15)';
+        box.style.border = '1px solid var(--accent-emerald)';
+        box.style.color = '#6ee7b7';
+        box.innerHTML = `<strong>✓ ALLOWED</strong>: Passed all active guardrails.`;
+      } else {
+        box.style.background = 'rgba(244, 63, 94, 0.15)';
+        box.style.border = '1px solid var(--accent-rose)';
+        box.style.color = '#fda4af';
+        box.innerHTML = `<strong>✕ ACTION: ${result.action.toUpperCase()}</strong><br>Reasoning: ${result.reasoning}`;
+      }
+    }
+
+    // Dashboard Metrics
+    async function loadDashboardMetrics() {
+      try {
+        const res = await fetch('/api/v1/health');
+        const data = await res.json();
+        document.getElementById('metricRules').textContent = data.gateway.active_rules;
+        document.getElementById('metricAssets').textContent = data.gateway.kb_assets;
+        document.getElementById('metricThreats').textContent = data.gateway.kb_threats;
+        document.getElementById('metricPending').textContent = data.gateway.pending_prompts;
+      } catch(e){}
+    }
+
+    // Init
+    initWebSocket();
+    loadDashboardMetrics();
+  </script>
+</body>
+</html>

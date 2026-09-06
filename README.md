@@ -130,6 +130,9 @@ Custos has zero required runtime dependencies beyond `jsonschema`. Optional feat
 # Core gateway + YAML policy support (recommended starting point)
 pip install "custos-middleware[yaml]"
 
+# Control Plane server & Web UI backend
+pip install "custos-middleware[server]"
+
 # Add LLM-backed risk assistants (LiteLLM)
 pip install "custos-middleware[llm]"
 
@@ -214,6 +217,30 @@ gated_test("pytest")
 bubble_mgr.commit("session-123")    # Applies staged edits to host workspace
 # or bubble_mgr.rollback("session-123")  # Eradicates worktree; host stays untouched
 ```
+
+### Web UI & Control Plane (Live Dashboard & Human Approvals)
+
+Custos includes a real-time Next.js Control Plane and WebSocket-backed human-in-the-loop approval interface for monitoring agent fleets, reviewing audit streams, editing policies, and resolving in-flight permission prompts.
+
+#### 1. Start the Control Plane Server
+```bash
+pip install "custos-middleware[server]"
+custos serve --port 8000 --policy policy.yaml
+```
+
+#### 2. Launch the Web UI
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+Open **[http://localhost:3000](http://localhost:3000)** in your browser:
+* **Interactive Approvals (`/approvals`)**: Real-time WebSocket prompt queue where operators inspect tool arguments, review AI risk recommendations, and grant or deny execution.
+* **Agent Sessions & Enclaves (`/agents`)**: Live monitoring of active agent sessions, taint levels, capability leases, and sandbox execution bubble status.
+* **Tamper-Evident Audit Feed (`/audit`)**: Searchable stream of SHA-256 hash-chained decision events with deep secret/PII redaction.
+* **Policy Editor (`/policies`)**: Visual management and hot-reloading of declarative YAML rule overlays.
+* **Knowledge Base & Guardrails (`/knowledge`)**: Contextual threat patterns, known prompt injection signatures, and allowed domain registries.
 
 ---
 

@@ -676,21 +676,54 @@ def _persist_assistant_rule_impl(policy: Policy, persist_rule: Any, inv: Invocat
 
     # H3 narrowness: check that a later deny* rule is not shadowed.
     matched_index = _resolve_policy_match_index(policy, inv)
+    if matched_index is None:
+        env = inv.context.extra.get("env") if inv.context.extra else None
+        env_str = env if isinstance(env, str) else None
+        for i, rule in enumerate(policy.rules):
+            if not rule.applies_to_context(
+                user_id=inv.context.user_id,
+                goal_id=inv.context.goal_id,
+                env=env_str,
+            ):
+                continue
+            tool_glob = rule.spec.match.get("tool")
+            if tool_glob is not None and fnmatch.fnmatchcase(inv.tool, tool_glob):
+                matched_index = i
+                break
+
     if matched_index is not None:
         matched_rule = policy.rules[matched_index]
+        match_spec = getattr(matched_rule, "_match", None)
         # H3 narrowness: if matched rule required clean taint, persisted rule cannot drop it.
-        if matched_rule.spec.requires_clean_taint and not match.get("requires_clean_taint"):
+        rule_req_clean = bool(
+            getattr(match_spec, "requires_clean_taint", False)
+            or matched_rule.spec.requires_clean_taint
+            or matched_rule.spec.match.get("requires_clean_taint")
+        )
+        if rule_req_clean and not (match.get("requires_clean_taint") is True):
             return
+
         # H3 narrowness: if matched rule required lease, persisted rule cannot drop it.
-        if matched_rule.spec.requires_lease and not match.get("requires_lease"):
+        rule_req_lease = bool(
+            getattr(match_spec, "requires_lease", False)
+            or matched_rule.spec.requires_lease
+            or matched_rule.spec.match.get("requires_lease")
+        )
+        if rule_req_lease and not (match.get("requires_lease") is True):
             return
+
         # H3 narrowness: if matched rule restricted max_taint, persisted rule cannot widen it.
-        if matched_rule.spec.max_taint is not None:
+        rule_max_taint = (
+            getattr(match_spec, "max_taint_level", None)
+            or matched_rule.spec.max_taint
+            or matched_rule.spec.match.get("max_taint")
+        )
+        if rule_max_taint is not None:
             persisted_max = match.get("max_taint")
             if persisted_max is None:
                 return
             try:
-                if TaintLevel.from_value(persisted_max) > TaintLevel.from_value(matched_rule.spec.max_taint):
+                if TaintLevel.from_value(persisted_max) > TaintLevel.from_value(rule_max_taint):
                     return
             except Exception:
                 return

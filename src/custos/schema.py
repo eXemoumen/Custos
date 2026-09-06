@@ -20,7 +20,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from custos.session.schema import TaintLevel
+
 __all__ = [
+    "TaintLevel",
     "SideEffect",
     "Decision",
     "DecideResult",
@@ -313,6 +316,7 @@ class SubjectContext:
     delegation_chain: tuple[str, ...] = ()
     session_ttl: int | None = None
     extra: Mapping[str, Any] = field(default_factory=dict)
+    session_id: str | None = None
 
     @property
     def delegation_depth(self) -> int:
@@ -320,7 +324,7 @@ class SubjectContext:
 
     def to_dict(self) -> dict[str, Any]:
         extra_filtered = {k: v for k, v in self.extra.items() if k in AUDIT_SUBJECT_FIELDS}
-        return {
+        res = {
             "user_id": self.user_id,
             "goal_id": self.goal_id,
             "task_id": self.task_id,
@@ -328,6 +332,9 @@ class SubjectContext:
             "session_ttl": self.session_ttl,
             "extra": extra_filtered,
         }
+        if self.session_id is not None:
+            res["session_id"] = self.session_id
+        return res
 
 
 @dataclass(frozen=True)
@@ -402,6 +409,7 @@ class InputSource:
     source_type: str
     content: str
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    taint_level: TaintLevel = TaintLevel.UNTRUSTED
 
     @property
     def content_hash(self) -> str:
@@ -569,10 +577,13 @@ class AuditEvent:
     changes. The hash-chained audit sink emits the envelope-level field at
     the same value; a contract-bump (any change to the wire shape) MUST
     bump this field at both ends (Python ``custos`` + TS ``@taqiy/custos-core``)."""
+    session_id: str | None = None
+    session_taint: str | None = None
+    lease_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for JSONL/structured sinks ."""
-        return {
+        res = {
             "ts_unix_ms": self.ts_unix_ms,
             "invocation": self.invocation.to_dict(),
             "decision": self.decision.value,
@@ -588,3 +599,10 @@ class AuditEvent:
             "quorum_state": self.quorum_state,
             "schema_version": self.schema_version,
         }
+        if self.session_id is not None:
+            res["session_id"] = self.session_id
+        if self.session_taint is not None:
+            res["session_taint"] = self.session_taint
+        if self.lease_id is not None:
+            res["lease_id"] = self.lease_id
+        return res

@@ -90,15 +90,12 @@ def _make_gated_fn(
         )
         snapshot = context_provider.get_snapshot() if context_provider else None
         result = gateway.decide(inv, snapshot=snapshot)
-        if (
-            result.decision == Decision.QUARANTINE
-            and memory_wipe is not None
-            and context_provider is not None
-        ):
-            current_ctx = context_provider.get_snapshot()
-            memory_wipe.sanitize(current_ctx, (), WipeStrategy.FULL)
+        if result.decision == Decision.QUARANTINE:
+            if memory_wipe is not None and context_provider is not None:
+                current_ctx = context_provider.get_snapshot()
+                memory_wipe.sanitize(current_ctx, (), WipeStrategy.FULL)
             raise PermissionDenied(name, result.decision.value)
-        if result.decision in (Decision.DENY, Decision.DEFER):
+        if not result.decision.is_allow:
             raise PermissionDenied(name, result.decision.value)
         return original.invoke(kwargs)
 

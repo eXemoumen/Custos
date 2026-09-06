@@ -376,6 +376,7 @@ def test_prometheus_sink_idempotent_on_same_registry() -> None:
     construction reuses the existing instruments (the multi-gateway
     single-process deployment shape).
     """
+    pytest.importorskip("prometheus_client")
     from prometheus_client import CollectorRegistry
 
     from custos.telemetry import PrometheusMetricsSink
@@ -398,6 +399,7 @@ def test_prometheus_sink_idempotent_on_default_global_registry() -> None:
     """The default ``prometheus_client.REGISTRY`` is process-global; a second
     sink construction reuses the existing instruments rather than raising.
     """
+    pytest.importorskip("prometheus_client")
     from prometheus_client import REGISTRY
 
     from custos.telemetry import PrometheusMetricsSink

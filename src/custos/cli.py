@@ -172,6 +172,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Audit JSONL sink path (optional; default stdout).",
     )
 
+    # ---- serve (Control Plane & Web UI) ----------------------
+    serve_parser = sub.add_parser("serve", help="Launch the Custos Control Plane server & Web UI.")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Host address to bind (default 0.0.0.0).")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default 8000).")
+    serve_parser.add_argument("--policy", default="", help="Path to policy YAML file.")
+    serve_parser.add_argument("--audit", default="", help="Path to JSONL audit file.")
+    serve_parser.add_argument("--kb", default="", help="Path to Knowledge Base JSON file.")
+    serve_parser.add_argument("--ollama-url", default="", help="Local Ollama URL (e.g. http://localhost:11434).")
+    serve_parser.add_argument("--ollama-model", default="llama3.2", help="Ollama model for guardrails (default llama3.2).")
+    serve_parser.add_argument("--token", default="", help="Bearer authentication token.")
+
     parsed = parser.parse_args(args)
 
     if parsed.command == "audit" and parsed.audit_command == "tail":
@@ -184,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         return _eval(parsed)
     if parsed.command == "sidecar":
         return _sidecar(parsed)
+    if parsed.command == "serve":
+        return _serve(parsed)
     return 2  # unreachable; argparse enforces required subcommands.
 
 
@@ -301,7 +314,38 @@ def _eval(parsed: argparse.Namespace) -> int:
 def _usage() -> None:
     print("custos - permission middleware for AI agents")
     print("usage: custos <command> [args]")
-    print("commands: audit tail, audit replay, audit verify, eval, sidecar")
+    print("commands: audit tail, audit replay, audit verify, eval, sidecar, serve")
+
+
+def _serve(parsed: argparse.Namespace) -> int:
+    """Handle ``custos serve [--host ...] [--port ...] ...``."""
+    try:
+        import uvicorn
+        from custos.server.app import create_app
+        from custos.server.config import ServerConfig
+    except ImportError as exc:
+        print(
+            f"custos serve: missing server dependencies: {exc}\n  pip install 'custos[server]'",
+            file=sys.stderr,
+        )
+        return 1
+
+    token = parsed.token or os.getenv("CUSTOS_AUTH_TOKEN")
+    cfg = ServerConfig(
+        host=parsed.host,
+        port=parsed.port,
+        auth_token=token or None,
+        policy_path=Path(parsed.policy) if parsed.policy else None,
+        audit_log_path=Path(parsed.audit) if parsed.audit else Path.home() / ".custos" / "audit.jsonl",
+        kb_path=Path(parsed.kb) if parsed.kb else Path.home() / ".custos" / "knowledge_base.json",
+        ollama_url=parsed.ollama_url or None,
+        ollama_model=parsed.ollama_model,
+        hmac_key=os.getenv("CUSTOS_HMAC_KEY"),
+    )
+    app = create_app(cfg)
+    print(f"Starting Custos Control Plane on http://{parsed.host}:{parsed.port}")
+    uvicorn.run(app, host=parsed.host, port=parsed.port)
+    return 0
 
 
 def _sidecar(parsed: argparse.Namespace) -> int:

@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  custos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: custos-control-plane
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - CUSTOS_HOST=0.0.0.0
+      - CUSTOS_PORT=8000
+      - CUSTOS_OLLAMA_URL=http://ollama:11434
+      - CUSTOS_OLLAMA_MODEL=llama3.2
+    volumes:
+      - custos-data:/root/.custos
+    depends_on:
+      - ollama
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    container_name: custos-ui
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - CUSTOS_BACKEND_URL=http://custos:8000
+      - NEXT_PUBLIC_CUSTOS_API=http://localhost:8000
+      - NEXT_PUBLIC_CUSTOS_WS=ws://localhost:8000/ws/approvals
+    depends_on:
+      - custos
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: custos-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+
+volumes:
+  custos-data:
+    name: custos-data
+  ollama-models:
+    name: ollama-models

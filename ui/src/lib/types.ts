@@ -142,6 +142,8 @@ export interface DecideRequest {
   task_id?: string;
   risk_tier?: number;
   extra?: Record<string, unknown>;
+  timeout_seconds?: number;
+  async_mode?: boolean;
 }
 
 export interface DecideResponse {
@@ -150,4 +152,6 @@ export interface DecideResponse {
   risk?: number;
   reasoning?: string;
   audit_event: AuditEventItem;
+  request_id?: string;
+  pending_approval?: boolean;
 }

@@ -137,6 +137,7 @@ class AgentSession:
     last_active_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     max_history_entries: int = 200
     metadata: dict[str, Any] = field(default_factory=dict)
+    bubble: Any = field(default=None, repr=False, compare=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def ingest_source(
@@ -174,6 +175,11 @@ class AgentSession:
             if escalated:
                 self.taint_level = source_taint
                 self._invalidate_tainted_leases()
+                if self.bubble is not None and hasattr(self.bubble, "notify_taint_escalation"):
+                    try:
+                        self.bubble.notify_taint_escalation(self.taint_level)
+                    except Exception:
+                        pass
 
             return escalated
 
@@ -253,11 +259,19 @@ class AgentSession:
             self.quarantine_reason = reason
             self.taint_level = TaintLevel.TAINTED_MALICIOUS
             self._invalidate_tainted_leases()
+            if self.bubble is not None and hasattr(self.bubble, "quarantine"):
+                try:
+                    self.bubble.quarantine(reason)
+                except Exception:
+                    if hasattr(self.bubble, "status"):
+                        from custos.sandbox.schema import BubbleStatus
+                        self.bubble.status = BubbleStatus.FAILED
+                    raise
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize session state for forensic audit or inspection."""
         with self._lock:
-            return {
+            res = {
                 "session_id": self.session_id,
                 "subject": self.subject.to_dict() if self.subject and hasattr(self.subject, "to_dict") else None,
                 "taint_level": self.taint_level.name,
@@ -270,3 +284,8 @@ class AgentSession:
                 "created_at_ms": self.created_at_ms,
                 "last_active_ms": self.last_active_ms,
             }
+            if self.bubble is not None:
+                res["bubble_id"] = getattr(self.bubble, "bubble_id", None)
+                status = getattr(self.bubble, "status", None)
+                res["bubble_status"] = status.value if hasattr(status, "value") else str(status)
+            return res

@@ -72,11 +72,13 @@ class Gateway:
         inspectors: list[ContextInspector] | None = None,
         local_only: bool = False,
         session_store: SessionStore | None = None,
+        bubble_manager: Any | None = None,
     ) -> None:
-        """``local_only`` enables the air-gapped profile (H4): the
-        registry refuses to register any assistant with ``exfiltrates_args=True``
-        — a remote-LLM assistant cannot exfiltrate args from a network-isolated
-        deployment. Default ``False``. (C4 regression, council 2026-07-22.)."""
+        """``local_only`` enables the air-gapped profile (H4). See
+        :class:`custos.gateway.Gateway` (C4 regression, council 2026-07-22).
+        The ``audit_sink`` typing mirrors the sync gateway so the
+        ``[FileAuditSink, OTLPAuditSink, PrometheusMetricsSink]`` wiring shape
+        type-checks (arch #2, council 2026-07-22)."""
         self.policy = policy
         self.responder = responder
         self.fatigue = fatigue
@@ -86,6 +88,7 @@ class Gateway:
         self._session_store: SessionStore = (
             session_store if session_store is not None else InMemorySessionStore()
         )
+        self._bubble_manager = bubble_manager
 
         registry = AssistantRegistry(local_only=local_only)
         if assistants:
@@ -107,6 +110,11 @@ class Gateway:
     def session_store(self) -> SessionStore:
         """Accessor to the active session store."""
         return self._session_store
+
+    @property
+    def bubble_manager(self) -> Any | None:
+        """Accessor to the active bubble manager."""
+        return self._bubble_manager
 
     @property
     def audit_sink(self) -> AuditSink:
@@ -149,6 +157,8 @@ class Gateway:
             or (f"{inv.context.user_id}:{inv.context.goal_id}" if inv.context.goal_id else inv.context.user_id)
         )
         session = self._session_store.get_or_create(session_id, inv.context)
+        if self._bubble_manager is not None and getattr(session, "bubble", None) is None:
+            session.bubble = self._bubble_manager.get_or_create(session_id)
         if inv.context.delegation_chain:
             for parent_id in inv.context.delegation_chain:
                 parent_sess = self._session_store.get(parent_id) or self._session_store.get(
@@ -195,6 +205,7 @@ class Gateway:
                 responder=None,
                 session_id=session.session_id,
                 session_taint=session.taint_level.name,
+                bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
             )
             return DecideResult(decision=Decision.QUARANTINE, audit=event)
 
@@ -234,6 +245,7 @@ class Gateway:
                 session_id=session.session_id,
                 session_taint=session.taint_level.name,
                 lease_id=used_lease_id,
+                bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
             )
             session.record_invocation(
                 tool=inv.tool,
@@ -257,6 +269,7 @@ class Gateway:
                 session_id=session.session_id,
                 session_taint=session.taint_level.name,
                 lease_id=used_lease_id,
+                bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
             )
             session.record_invocation(
                 tool=inv.tool,
@@ -283,6 +296,7 @@ class Gateway:
                     session_id=session.session_id,
                     session_taint=session.taint_level.name,
                     lease_id=used_lease_id,
+                    bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
                 )
                 session.record_invocation(
                     tool=inv.tool,
@@ -441,6 +455,7 @@ class Gateway:
                 session_id=session.session_id,
                 session_taint=session.taint_level.name,
                 lease_id=used_lease_id,
+                bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
             )
             session.record_invocation(
                 tool=inv.tool,
@@ -546,6 +561,7 @@ class Gateway:
         session_id: str | None = None,
         session_taint: str | None = None,
         lease_id: str | None = None,
+        bubble_id: str | None = None,
     ) -> AuditEvent:
         """Emit the structured audit event . Redacts args first .
         Returns the emitted event so callers can capture it without
@@ -570,6 +586,7 @@ class Gateway:
             session_id=session_id,
             session_taint=session_taint,
             lease_id=lease_id,
+            bubble_id=bubble_id,
         )
         self._audit.emit(event)
         return event

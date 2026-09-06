@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import threading
@@ -16,6 +17,8 @@ from custos.responders.base import PromptRequest, PromptResponse, Responder, Res
 from custos.schema import Decision
 
 logger = logging.getLogger(__name__)
+
+async_mode_ctx: contextvars.ContextVar[bool] = contextvars.ContextVar("server_approval_async_mode", default=False)
 
 
 class ServerApprovalManager:
@@ -48,6 +51,15 @@ class ServerApprovalManager:
 
     def list_pending(self) -> list[dict[str, Any]]:
         with self._lock:
+            now_ms = int(time.time() * 1000)
+            # Prune expired prompts
+            expired = [
+                req_id for req_id, (req, _, _, _) in self._pending.items()
+                if req.deadline_unix_ms and now_ms > req.deadline_unix_ms
+            ]
+            for req_id in expired:
+                self._pending.pop(req_id, None)
+
             prompts = []
             for req_id, (req, _, _, created_at) in self._pending.items():
                 prompts.append({
@@ -77,6 +89,58 @@ class ServerApprovalManager:
             except Exception as err:
                 logger.debug("Failed to send to WebSocket: %s", err)
 
+    def get_prompt(self, request_id: str) -> dict[str, Any] | None:
+        """Retrieve details of a single pending prompt."""
+        with self._lock:
+            entry = self._pending.get(request_id)
+            if entry is None:
+                return None
+            req, _, _, created_at = entry
+            return {
+                "request_id": request_id,
+                "tool": req.tool,
+                "args": dict(req.args_redacted),
+                "risk": req.risk,
+                "reasoning": req.reasoning,
+                "options": [opt.value for opt in req.options],
+                "created_at": created_at,
+                "deadline_ms": req.deadline_unix_ms,
+            }
+
+    def cancel_prompt(self, request_id: str, reason: str = "cancelled_by_operator") -> bool:
+        """Cancel a pending prompt, automatically resolving it with DENY."""
+        return self.resolve_prompt(request_id, Decision.DENY, approver=reason)
+
+    def batch_resolve_prompts(
+        self,
+        resolutions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Resolve multiple pending prompts in a single batch operation."""
+        results = []
+        for item in resolutions:
+            req_id = item.get("request_id")
+            choice = item.get("choice")
+            approver = item.get("approver", "batch_admin")
+            if not req_id or not choice:
+                results.append({"request_id": req_id, "success": False, "error": "Missing request_id or choice"})
+                continue
+            try:
+                dec = Decision(choice)
+                success = self.resolve_prompt(req_id, dec, approver=approver)
+                results.append({"request_id": req_id, "success": success, "choice": dec.value})
+            except Exception as e:
+                results.append({"request_id": req_id, "success": False, "error": str(e)})
+        return results
+
+    def broadcast_agent_status(self, agent_id: str, status: str) -> None:
+        """Broadcast real-time agent containment/status transition to all connected WebSockets."""
+        self.broadcast_sync({
+            "type": "agent_status_changed",
+            "agent_id": agent_id,
+            "status": status,
+            "ts": time.time(),
+        })
+
     def resolve_prompt(
         self,
         request_id: str,
@@ -85,7 +149,7 @@ class ServerApprovalManager:
     ) -> bool:
         """Resolves a pending prompt and unblocks the waiting gateway thread."""
         with self._lock:
-            entry = self._pending.get(request_id)
+            entry = self._pending.pop(request_id, None)
             if entry is None:
                 return False
 
@@ -105,8 +169,42 @@ class ServerApprovalManager:
         })
         return True
 
+    def submit_async(self, req: PromptRequest) -> tuple[PromptResponse, str]:
+        """Registers a prompt request non-blockingly and broadcasts to connected clients."""
+        req_id = req.request_id or f"prompt-{uuid.uuid4()}"
+        event = threading.Event()
+        result_holder: dict[str, Any] = {}
+
+        timeout = self.default_timeout_seconds
+        if req.deadline_unix_ms:
+            now_ms = int(time.time() * 1000)
+            timeout = max(1.0, (req.deadline_unix_ms - now_ms) / 1000.0)
+
+        with self._lock:
+            self._pending[req_id] = (req, event, result_holder, time.time())
+
+        # Notify UI clients
+        self.broadcast_sync({
+            "type": "prompt_requested",
+            "data": {
+                "request_id": req_id,
+                "tool": req.tool,
+                "args": dict(req.args_redacted),
+                "risk": req.risk,
+                "reasoning": req.reasoning,
+                "options": [opt.value for opt in req.options],
+                "timeout_seconds": timeout,
+            },
+        })
+        logger.info("Prompt %s registered in async mode (non-blocking)", req_id)
+        return PromptResponse(choice=Decision.PROMPT, approver="pending"), req_id
+
     def submit_and_wait(self, req: PromptRequest) -> PromptResponse:
         """Submits a prompt request and blocks until a user responds or timeout expires."""
+        if async_mode_ctx.get():
+            resp, _ = self.submit_async(req)
+            return resp
+
         req_id = req.request_id or f"prompt-{uuid.uuid4()}"
         event = threading.Event()
         result_holder: dict[str, Any] = {}

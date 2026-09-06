@@ -9,6 +9,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+import uuid
 
 from custos.audit import FileAuditSink, HashChainedAuditSink
 from custos.gateway import Gateway
@@ -25,7 +26,7 @@ from custos.schema import (
     ToolDescriptor,
 )
 from custos.server.config import ServerConfig
-from custos.server.ws import ServerApprovalManager, ServerResponder
+from custos.server.ws import ServerApprovalManager, ServerResponder, async_mode_ctx
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +58,11 @@ class GatewayManager:
         # Build initial Policy
         self._policy = self._build_policy()
 
-        # Agent tracking & quarantine registry
+        # Agent tracking & quarantine registry with persistence
+        self._agents_file = self.config.kb_path.parent / "agents.json"
         self._agents: dict[str, dict[str, Any]] = {}
         self._quarantined_agents: set[str] = set()
+        self._load_agents()
 
         # Cumulative metrics counters
         self._metric_counters: dict[str, int] = {
@@ -143,6 +146,39 @@ class GatewayManager:
             self.gateway.policy = new_policy
             logger.info("Recompiled Knowledge Base and reloaded Gateway policy.")
 
+    def _load_agents(self) -> None:
+        """Load registered agents and quarantine state from disk."""
+        if not self._agents_file.exists():
+            return
+        try:
+            raw = self._agents_file.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                agents_data = data.get("agents", {})
+                if isinstance(agents_data, dict):
+                    self._agents = agents_data
+                elif isinstance(agents_data, list):
+                    self._agents = {a["id"]: a for a in agents_data if isinstance(a, dict) and "id" in a}
+                quarantined = data.get("quarantined", [])
+                if isinstance(quarantined, list):
+                    self._quarantined_agents = set(quarantined)
+            logger.info("Loaded %d agents from %s", len(self._agents), self._agents_file)
+        except Exception as e:
+            logger.warning("Could not load agents file %s: %s", self._agents_file, e)
+
+    def _save_agents(self) -> None:
+        """Persist registered agents and quarantine state to disk."""
+        try:
+            self._agents_file.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "agents": self._agents,
+                "quarantined": list(self._quarantined_agents),
+            }
+            self._agents_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning("Could not save agents file %s: %s", self._agents_file, e)
+
     def decide(
         self,
         tool: str,
@@ -152,48 +188,74 @@ class GatewayManager:
         task_id: str | None = None,
         risk_tier: int = 2,
         extra: dict[str, Any] | None = None,
+        timeout_seconds: float | None = None,
+        async_mode: bool = False,
     ) -> DecideResult:
         """Evaluate a tool invocation through the full Custos decision pipeline."""
         with self._lock:
-            # Check quarantine status
-            if user_id in self._quarantined_agents:
-                audit = AuditEvent(
-                    tool=tool,
-                    decision=Decision.QUARANTINE,
-                    risk_score=1.0,
-                    reasoning=f"Agent '{user_id}' is currently quarantined due to prior security violations.",
-                    policy_rule_id="gateway_agent_quarantine",
-                )
-                self.audit_sink.emit(audit)
+            is_quarantined = user_id in self._quarantined_agents
+
+        if is_quarantined:
+            audit = AuditEvent(
+                tool=tool,
+                decision=Decision.QUARANTINE,
+                risk_score=1.0,
+                reasoning=f"Agent '{user_id}' is currently quarantined due to prior security violations.",
+                policy_rule_id="gateway_agent_quarantine",
+            )
+            self.audit_sink.emit(audit)
+            with self._lock:
                 self._record_agent_activity(user_id, tool)
                 self._record_decision_metric(Decision.QUARANTINE)
-                return DecideResult(decision=Decision.QUARANTINE, audit=audit)
+            return DecideResult(decision=Decision.QUARANTINE, audit=audit)
 
-            context = SubjectContext(
-                user_id=user_id,
-                goal_id=goal_id,
-                task_id=task_id,
-                extra=extra or {},
-            )
-            descriptor = ToolDescriptor(
-                name=tool,
-                risk_tier=risk_tier,
-            )
-            inv = Invocation(
-                tool=tool,
-                args=args,
-                context=context,
-                descriptor=descriptor,
-            )
+        extra_dict = dict(extra or {})
+        if timeout_seconds:
+            extra_dict["timeout_seconds"] = timeout_seconds
+
+        invocation_req_id = extra_dict.get("request_id") or f"prompt-{uuid.uuid4()}"
+
+        context = SubjectContext(
+            user_id=user_id,
+            goal_id=goal_id,
+            task_id=task_id,
+            extra=extra_dict,
+        )
+        descriptor = ToolDescriptor(
+            name=tool,
+            risk_tier=risk_tier,
+        )
+        inv = Invocation(
+            tool=tool,
+            args=args,
+            context=context,
+            descriptor=descriptor,
+            request_id=invocation_req_id,
+        )
+
+        orig_timeout = self.approval_manager.default_timeout_seconds
+        if timeout_seconds and timeout_seconds > 0:
+            self.approval_manager.default_timeout_seconds = timeout_seconds
+
+        token = async_mode_ctx.set(async_mode)
+        try:
             result = self.gateway.decide(inv)
+        finally:
+            async_mode_ctx.reset(token)
+            if timeout_seconds and timeout_seconds > 0:
+                self.approval_manager.default_timeout_seconds = orig_timeout
 
+        with self._lock:
             # Auto-quarantine agent if decision was quarantine
             if result.decision == Decision.QUARANTINE:
                 self._quarantined_agents.add(user_id)
+                self._save_agents()
+                self.approval_manager.broadcast_agent_status(user_id, "quarantined")
 
             self._record_agent_activity(user_id, tool)
             self._record_decision_metric(result.decision)
-            return result
+
+        return result
 
     def _record_decision_metric(self, decision: Decision | str) -> None:
         """Increment cumulative in-memory metrics counters."""
@@ -209,7 +271,8 @@ class GatewayManager:
     def _record_agent_activity(self, agent_id: str, tool: str) -> None:
         """Record live agent telemetry."""
         now = time.time()
-        if agent_id not in self._agents:
+        is_new = agent_id not in self._agents
+        if is_new:
             self._agents[agent_id] = {
                 "id": agent_id,
                 "name": agent_id.replace("_", " ").title(),
@@ -227,6 +290,9 @@ class GatewayManager:
             rec["last_tool"] = tool
             rec["status"] = "quarantined" if agent_id in self._quarantined_agents else "active"
 
+        if is_new:
+            self._save_agents()
+
     def list_agents(self) -> list[dict[str, Any]]:
         """Return list of observed and registered agents."""
         with self._lock:
@@ -235,6 +301,70 @@ class GatewayManager:
                 data["status"] = "quarantined" if a_id in self._quarantined_agents else "active"
             return list(self._agents.values())
 
+    def register_agent(
+        self,
+        agent_id: str,
+        name: str | None = None,
+        framework: str = "Autonomous / Ingress",
+        policy_profile: str = "compiled-abac-strict",
+        description: str = "",
+    ) -> dict[str, Any]:
+        """Register a new autonomous agent or update an existing registration."""
+        with self._lock:
+            now = time.time()
+            clean_id = agent_id.strip()
+            display_name = name.strip() if name and name.strip() else clean_id.replace("_", " ").title()
+            existing = self._agents.get(clean_id)
+            record = {
+                "id": clean_id,
+                "name": display_name,
+                "framework": framework,
+                "status": "quarantined" if clean_id in self._quarantined_agents else (existing.get("status", "active") if existing else "active"),
+                "policy_profile": policy_profile,
+                "description": description,
+                "calls": existing.get("calls", 0) if existing else 0,
+                "last_seen_ts": existing.get("last_seen_ts", now) if existing else now,
+                "last_tool": existing.get("last_tool", None) if existing else None,
+            }
+            self._agents[clean_id] = record
+            self._save_agents()
+            self.approval_manager.broadcast_agent_status(clean_id, record["status"])
+            return dict(record)
+
+    def get_agent(self, agent_id: str) -> dict[str, Any] | None:
+        """Retrieve details of a single registered agent."""
+        with self._lock:
+            data = self._agents.get(agent_id)
+            if data is None:
+                return None
+            data["status"] = "quarantined" if agent_id in self._quarantined_agents else "active"
+            return dict(data)
+
+    def update_agent(self, agent_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Update an agent's configuration, profile, or framework."""
+        with self._lock:
+            if agent_id not in self._agents:
+                return None
+            rec = self._agents[agent_id]
+            for field in ("name", "framework", "policy_profile", "description"):
+                if field in updates and updates[field] is not None:
+                    rec[field] = updates[field]
+            rec["status"] = "quarantined" if agent_id in self._quarantined_agents else "active"
+            self._save_agents()
+            self.approval_manager.broadcast_agent_status(agent_id, rec["status"])
+            return dict(rec)
+
+    def delete_agent(self, agent_id: str) -> bool:
+        """Deregister an agent and remove from quarantine state."""
+        with self._lock:
+            if agent_id not in self._agents:
+                return False
+            del self._agents[agent_id]
+            self._quarantined_agents.discard(agent_id)
+            self._save_agents()
+            self.approval_manager.broadcast_agent_status(agent_id, "deleted")
+            return True
+
     def quarantine_agent(self, agent_id: str) -> bool:
         """Place an agent in quarantine."""
         with self._lock:
@@ -242,6 +372,8 @@ class GatewayManager:
                 return False
             self._quarantined_agents.add(agent_id)
             self._agents[agent_id]["status"] = "quarantined"
+            self._save_agents()
+            self.approval_manager.broadcast_agent_status(agent_id, "quarantined")
             return True
 
     def release_agent(self, agent_id: str) -> bool:
@@ -251,10 +383,17 @@ class GatewayManager:
                 return False
             self._quarantined_agents.discard(agent_id)
             self._agents[agent_id]["status"] = "active"
+            self._save_agents()
+            self.approval_manager.broadcast_agent_status(agent_id, "active")
             return True
 
-    def get_audit_events(self, limit: int | None = 50, offset: int = 0) -> list[dict[str, Any]]:
-        """Read recent audit log events from the audit sink."""
+    def get_audit_events(
+        self,
+        limit: int | None = 50,
+        offset: int = 0,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read recent audit log events from the audit sink with optional user/agent filter."""
         path = self.config.audit_log_path
         if not path.exists():
             return []
@@ -274,11 +413,20 @@ class GatewayManager:
                                 ev["hash"] = line_hash
                                 ev["prev_hash"] = data.get("prev_hash")
                                 ev["sig"] = data.get("sig")
-                                events.append(ev)
                             else:
                                 ev = dict(data)
                                 ev["hash"] = line_hash
-                                events.append(ev)
+
+                            # Promote nested fields to top level for API and UI convenience
+                            subj = ev.get("subject") if isinstance(ev.get("subject"), dict) else {}
+                            if "user_id" not in ev and "user_id" in subj:
+                                ev["user_id"] = subj["user_id"]
+                            if "agent_id" not in ev:
+                                ev["agent_id"] = ev.get("user_id") or ev.get("assistant")
+                            if "tool" not in ev and isinstance(ev.get("invocation"), dict):
+                                ev["tool"] = ev["invocation"].get("tool")
+
+                            events.append(ev)
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
@@ -287,6 +435,13 @@ class GatewayManager:
 
         # Reverse so newest are first
         events.reverse()
+        if user_id:
+            events = [
+                e for e in events
+                if e.get("user_id") == user_id
+                or e.get("agent_id") == user_id
+                or (isinstance(e.get("subject"), dict) and e["subject"].get("user_id") == user_id)
+            ]
         if limit is None:
             return events[offset:]
         return events[offset : offset + limit]

@@ -47,7 +47,7 @@ class CapabilityLease:
     allowed_args_predicates: Mapping[str, Any] = field(default_factory=dict)
     revoked: bool = False
     revoked_reason: str = ""
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def matches_args(self, args: Mapping[str, Any] | None) -> bool:
         """Evaluate whether the given invocation args satisfy allowed_args_predicates."""

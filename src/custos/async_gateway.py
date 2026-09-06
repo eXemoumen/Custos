@@ -51,6 +51,7 @@ from custos.gateway import (
 )
 from custos.inspectors.base import InspectorRegistry
 from custos.policy import Policy
+from custos.session import AgentSession, InMemorySessionStore, SessionStore, TaintLevel
 from custos.schema import (
     AssistantOutput,
     AuditEvent,
@@ -122,6 +123,7 @@ class AsyncGateway:
         inspector: ContextInspector | ContextInspectorAsync | None = None,
         inspectors: list[ContextInspector | ContextInspectorAsync] | None = None,
         local_only: bool = False,
+        session_store: SessionStore | None = None,
     ) -> None:
         """``local_only`` enables the air-gapped profile (H4). See
         :class:`custos.gateway.Gateway` (C4 regression, council 2026-07-22).
@@ -134,6 +136,9 @@ class AsyncGateway:
         self.default_timeout_ms = default_timeout_ms
         self.local_only = local_only
         self._audit = _resolve_audit_sink(audit_sink)
+        self._session_store: SessionStore = (
+            session_store if session_store is not None else InMemorySessionStore()
+        )
 
         registry = AssistantRegistry(local_only=local_only)
         if assistants:
@@ -150,6 +155,11 @@ class AsyncGateway:
         if inspector is not None:
             insp_registry.register(cast("ContextInspector", inspector))
         self._inspector_registry = insp_registry
+
+    @property
+    def session_store(self) -> SessionStore:
+        """Accessor to the active session store."""
+        return self._session_store
 
     async def decide(
         self, inv: Invocation, *, snapshot: ContextSnapshot | None = None
@@ -170,13 +180,86 @@ class AsyncGateway:
         start = time.monotonic()
         request_id = inv.request_id or uuid.uuid4().hex
 
+        # 0. Session resolution & dynamic taint ingestion
+        session_id = (
+            inv.context.session_id
+            or (f"{inv.context.user_id}:{inv.context.task_id}" if inv.context.task_id else None)
+            or (f"{inv.context.user_id}:{inv.context.goal_id}" if inv.context.goal_id else inv.context.user_id)
+        )
+        session = self._session_store.get_or_create(session_id, inv.context)
+        if inv.context.delegation_chain:
+            for parent_id in inv.context.delegation_chain:
+                parent_sess = self._session_store.get(parent_id) or self._session_store.get(
+                    f"{inv.context.user_id}:{parent_id}"
+                )
+                if parent_sess is not None:
+                    if parent_sess.is_quarantined and not session.is_quarantined:
+                        session.quarantine(
+                            f"inherited quarantine from delegator {parent_id}: {parent_sess.quarantine_reason}"
+                        )
+                    elif parent_sess.taint_level > session.taint_level:
+                        session.ingest_source(
+                            source_id=f"delegation:{parent_id}",
+                            source_type="delegation",
+                            taint=parent_sess.taint_level,
+                            metadata={"parent_session_id": parent_sess.session_id},
+                        )
+
+        if snapshot is not None:
+            for src in snapshot.active_sources:
+                session.ingest_source(
+                    source_id=src.source_id,
+                    source_type=src.source_type,
+                    taint=getattr(src, "taint_level", TaintLevel.UNTRUSTED),
+                    content_hash=src.content_hash,
+                    metadata=src.metadata,
+                )
+
+        if session.is_quarantined:
+            session.record_invocation(
+                inv.tool,
+                Decision.QUARANTINE,
+                risk_score=1.0,
+                policy_match="session:quarantined",
+            )
+            event = self._emit_audit(
+                inv,
+                Decision.QUARANTINE,
+                "session:quarantined",
+                start,
+                assistant=None,
+                risk=1.0,
+                reasoning=f"session is quarantined ({session.quarantine_reason})",
+                responder=None,
+                session_id=session.session_id,
+                session_taint=session.taint_level.name,
+            )
+            return DecideResult(decision=Decision.QUARANTINE, audit=event)
+
         # 1. Parse - already structured in ``inv``.
         # 2. Policy evaluation (deterministic, pure, thread-safe) + resolve match in one scan.
-        outcome, policy_match, matched = _evaluate_with_match(self.policy, inv)
+        outcome, policy_match, matched = _evaluate_with_match(self.policy, inv, session=session)
+
+        # Consume capability lease if matched rule requires lease
+        used_lease_id: str | None = None
+        lease_exhausted = False
+        if matched is not None and getattr(matched, "requires_lease", False):
+            consumed_lease = session.consume_lease(inv.tool, args=inv.args)
+            if consumed_lease is not None:
+                used_lease_id = consumed_lease.lease_id
+            else:
+                outcome = PolicyOutcome.DENY
+                policy_match = f"{policy_match}:lease_exhausted"
+                lease_exhausted = True
 
         # 3. Floor/ceiling : policy DENY/ALLOW short-circuit before the
         #    try block so their audit events are always emitted directly.
         if outcome == PolicyOutcome.DENY:
+            reason = (
+                "lease: required capability lease could not be consumed (exhausted, expired, or args mismatch)"
+                if lease_exhausted
+                else "policy: deny"
+            )
             event = self._emit_audit(
                 inv,
                 Decision.DENY,
@@ -184,8 +267,18 @@ class AsyncGateway:
                 start,
                 assistant=None,
                 risk=0.0,
-                reasoning="policy: deny",
+                reasoning=reason,
                 responder=None,
+                session_id=session.session_id,
+                session_taint=session.taint_level.name,
+                lease_id=used_lease_id,
+            )
+            session.record_invocation(
+                tool=inv.tool,
+                decision=Decision.DENY,
+                risk_score=0.0,
+                lease_id=used_lease_id,
+                policy_match=policy_match,
             )
             return DecideResult(decision=Decision.DENY, audit=event)
 
@@ -199,6 +292,16 @@ class AsyncGateway:
                 risk=0.0,
                 reasoning="policy: allow",
                 responder=None,
+                session_id=session.session_id,
+                session_taint=session.taint_level.name,
+                lease_id=used_lease_id,
+            )
+            session.record_invocation(
+                tool=inv.tool,
+                decision=Decision.ALLOW,
+                risk_score=0.0,
+                lease_id=used_lease_id,
+                policy_match=policy_match,
             )
             return DecideResult(decision=Decision.ALLOW, audit=event)
 
@@ -216,6 +319,16 @@ class AsyncGateway:
                     risk=0.0,
                     reasoning=f"fatigue: cache hit ({fatigue_name})",
                     responder=None,
+                    session_id=session.session_id,
+                    session_taint=session.taint_level.name,
+                    lease_id=used_lease_id,
+                )
+                session.record_invocation(
+                    tool=inv.tool,
+                    decision=cached,
+                    risk_score=0.0,
+                    lease_id=used_lease_id,
+                    policy_match=policy_match,
                 )
                 return DecideResult(decision=cached, audit=event)
 
@@ -358,6 +471,9 @@ class AsyncGateway:
             fatigue_cacheable = False
 
         finally:
+            if decision == Decision.QUARANTINE and not session.is_quarantined:
+                session.quarantine(reasoning)
+
             event = self._emit_audit(
                 inv,
                 decision,
@@ -369,7 +485,17 @@ class AsyncGateway:
                 responder=getattr(self.responder, "name", None) if self.responder else None,
                 approver=response.approver if response else None,
                 inspector=inspector_name,
-                quorum_state=_infer_quorum_state(self.policy, inv, decision, matched),
+                quorum_state=_infer_quorum_state(self.policy, inv, decision, matched, session=session),
+                session_id=session.session_id,
+                session_taint=session.taint_level.name,
+                lease_id=used_lease_id,
+            )
+            session.record_invocation(
+                tool=inv.tool,
+                decision=decision,
+                risk_score=risk,
+                lease_id=used_lease_id,
+                policy_match=policy_match,
             )
             if self.fatigue is not None:
                 with suppress(Exception):
@@ -448,6 +574,9 @@ class AsyncGateway:
         approver: str | None = None,
         inspector: str | None = None,
         quorum_state: str | None = None,
+        session_id: str | None = None,
+        session_taint: str | None = None,
+        lease_id: str | None = None,
     ) -> AuditEvent:
         """Emit the structured audit event . Redacts args first .
         Returns the emitted event so callers can capture it without
@@ -472,6 +601,9 @@ class AsyncGateway:
             approver=approver,
             inspector=inspector,
             quorum_state=quorum_state,
+            session_id=session_id,
+            session_taint=session_taint,
+            lease_id=lease_id,
         )
         self._audit.emit(event)
         return event
@@ -529,7 +661,7 @@ class AsyncGateway:
                     descriptor=desc,
                 )
                 decision = await gw.decide(inv)
-                if decision.decision in (Decision.DENY, Decision.DEFER):
+                if not decision.decision.is_allow:
                     raise PermissionDenied(
                         name,
                         decision.decision.value,

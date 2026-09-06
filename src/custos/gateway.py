@@ -21,6 +21,7 @@ from custos.inspectors.base import InspectorRegistry
 from custos.policy import PolicyRuleSpec, Rule
 from custos.policy.engine import _action_to_outcome
 from custos.policy.schema import PolicyValidationError
+from custos.session import AgentSession, InMemorySessionStore, SessionStore, TaintLevel
 from custos.schema import (
     AssistantOutput,
     AuditEvent,
@@ -70,6 +71,7 @@ class Gateway:
         inspector: ContextInspector | None = None,
         inspectors: list[ContextInspector] | None = None,
         local_only: bool = False,
+        session_store: SessionStore | None = None,
     ) -> None:
         """``local_only`` enables the air-gapped profile (H4): the
         registry refuses to register any assistant with ``exfiltrates_args=True``
@@ -81,6 +83,9 @@ class Gateway:
         self.default_timeout_ms = default_timeout_ms
         self.local_only = local_only
         self._audit = _resolve_audit_sink(audit_sink)
+        self._session_store: SessionStore = (
+            session_store if session_store is not None else InMemorySessionStore()
+        )
 
         registry = AssistantRegistry(local_only=local_only)
         if assistants:
@@ -97,6 +102,11 @@ class Gateway:
         if inspector is not None:
             insp_registry.register(inspector)
         self._inspector_registry = insp_registry
+
+    @property
+    def session_store(self) -> SessionStore:
+        """Accessor to the active session store."""
+        return self._session_store
 
     @property
     def audit_sink(self) -> AuditSink:
@@ -132,13 +142,86 @@ class Gateway:
         start = time.monotonic()
         request_id = inv.request_id or uuid.uuid4().hex
 
+        # 0. Session resolution & dynamic taint ingestion
+        session_id = (
+            inv.context.session_id
+            or (f"{inv.context.user_id}:{inv.context.task_id}" if inv.context.task_id else None)
+            or (f"{inv.context.user_id}:{inv.context.goal_id}" if inv.context.goal_id else inv.context.user_id)
+        )
+        session = self._session_store.get_or_create(session_id, inv.context)
+        if inv.context.delegation_chain:
+            for parent_id in inv.context.delegation_chain:
+                parent_sess = self._session_store.get(parent_id) or self._session_store.get(
+                    f"{inv.context.user_id}:{parent_id}"
+                )
+                if parent_sess is not None:
+                    if parent_sess.is_quarantined and not session.is_quarantined:
+                        session.quarantine(
+                            f"inherited quarantine from delegator {parent_id}: {parent_sess.quarantine_reason}"
+                        )
+                    elif parent_sess.taint_level > session.taint_level:
+                        session.ingest_source(
+                            source_id=f"delegation:{parent_id}",
+                            source_type="delegation",
+                            taint=parent_sess.taint_level,
+                            metadata={"parent_session_id": parent_sess.session_id},
+                        )
+
+        if snapshot is not None:
+            for src in snapshot.active_sources:
+                session.ingest_source(
+                    source_id=src.source_id,
+                    source_type=src.source_type,
+                    taint=getattr(src, "taint_level", TaintLevel.UNTRUSTED),
+                    content_hash=src.content_hash,
+                    metadata=src.metadata,
+                )
+
+        if session.is_quarantined:
+            session.record_invocation(
+                inv.tool,
+                Decision.QUARANTINE,
+                risk_score=1.0,
+                policy_match="session:quarantined",
+            )
+            event = self._emit_audit(
+                inv,
+                Decision.QUARANTINE,
+                "session:quarantined",
+                start,
+                assistant=None,
+                risk=1.0,
+                reasoning=f"session is quarantined ({session.quarantine_reason})",
+                responder=None,
+                session_id=session.session_id,
+                session_taint=session.taint_level.name,
+            )
+            return DecideResult(decision=Decision.QUARANTINE, audit=event)
+
         # 1. Parse - already structured in ``inv``.
         # 2. Policy evaluation (deterministic, pure) + resolve match in one scan.
-        outcome, policy_match, matched = _evaluate_with_match(self.policy, inv)
+        outcome, policy_match, matched = _evaluate_with_match(self.policy, inv, session=session)
+
+        # Consume capability lease if matched rule requires lease
+        used_lease_id: str | None = None
+        lease_exhausted = False
+        if matched is not None and getattr(matched, "requires_lease", False):
+            consumed_lease = session.consume_lease(inv.tool, args=inv.args)
+            if consumed_lease is not None:
+                used_lease_id = consumed_lease.lease_id
+            else:
+                outcome = PolicyOutcome.DENY
+                policy_match = f"{policy_match}:lease_exhausted"
+                lease_exhausted = True
 
         # 3. Floor/ceiling : policy DENY/ALLOW short-circuit before the
         #    try block so their audit events are always emitted directly.
         if outcome == PolicyOutcome.DENY:
+            reason = (
+                "lease: required capability lease could not be consumed (exhausted, expired, or args mismatch)"
+                if lease_exhausted
+                else "policy: deny"
+            )
             event = self._emit_audit(
                 inv,
                 Decision.DENY,
@@ -146,8 +229,18 @@ class Gateway:
                 start,
                 assistant=None,
                 risk=0.0,
-                reasoning="policy: deny",
+                reasoning=reason,
                 responder=None,
+                session_id=session.session_id,
+                session_taint=session.taint_level.name,
+                lease_id=used_lease_id,
+            )
+            session.record_invocation(
+                tool=inv.tool,
+                decision=Decision.DENY,
+                risk_score=0.0,
+                lease_id=used_lease_id,
+                policy_match=policy_match,
             )
             return DecideResult(decision=Decision.DENY, audit=event)
 
@@ -161,6 +254,16 @@ class Gateway:
                 risk=0.0,
                 reasoning="policy: allow",
                 responder=None,
+                session_id=session.session_id,
+                session_taint=session.taint_level.name,
+                lease_id=used_lease_id,
+            )
+            session.record_invocation(
+                tool=inv.tool,
+                decision=Decision.ALLOW,
+                risk_score=0.0,
+                lease_id=used_lease_id,
+                policy_match=policy_match,
             )
             return DecideResult(decision=Decision.ALLOW, audit=event)
 
@@ -177,6 +280,16 @@ class Gateway:
                     risk=0.0,
                     reasoning=f"fatigue: cache hit ({self.fatigue.name})",
                     responder=None,
+                    session_id=session.session_id,
+                    session_taint=session.taint_level.name,
+                    lease_id=used_lease_id,
+                )
+                session.record_invocation(
+                    tool=inv.tool,
+                    decision=cached,
+                    risk_score=0.0,
+                    lease_id=used_lease_id,
+                    policy_match=policy_match,
                 )
                 return DecideResult(decision=cached, audit=event)
 
@@ -310,6 +423,9 @@ class Gateway:
             fatigue_cacheable = False
 
         finally:
+            if decision == Decision.QUARANTINE and not session.is_quarantined:
+                session.quarantine(reasoning)
+
             event = self._emit_audit(
                 inv,
                 decision,
@@ -321,7 +437,17 @@ class Gateway:
                 responder=getattr(self.responder, "name", None) if self.responder else None,
                 approver=response.approver if response else None,
                 inspector=inspector_name,
-                quorum_state=_infer_quorum_state(self.policy, inv, decision, matched),
+                quorum_state=_infer_quorum_state(self.policy, inv, decision, matched, session=session),
+                session_id=session.session_id,
+                session_taint=session.taint_level.name,
+                lease_id=used_lease_id,
+            )
+            session.record_invocation(
+                tool=inv.tool,
+                decision=decision,
+                risk_score=risk,
+                lease_id=used_lease_id,
+                policy_match=policy_match,
             )
             if self.fatigue is not None:
                 with suppress(Exception):
@@ -417,6 +543,9 @@ class Gateway:
         approver: str | None = None,
         inspector: str | None = None,
         quorum_state: str | None = None,
+        session_id: str | None = None,
+        session_taint: str | None = None,
+        lease_id: str | None = None,
     ) -> AuditEvent:
         """Emit the structured audit event . Redacts args first .
         Returns the emitted event so callers can capture it without
@@ -438,6 +567,9 @@ class Gateway:
             approver=approver,
             inspector=inspector,
             quorum_state=quorum_state,
+            session_id=session_id,
+            session_taint=session_taint,
+            lease_id=lease_id,
         )
         self._audit.emit(event)
         return event
@@ -545,6 +677,24 @@ def _persist_assistant_rule_impl(policy: Policy, persist_rule: Any, inv: Invocat
     # H3 narrowness: check that a later deny* rule is not shadowed.
     matched_index = _resolve_policy_match_index(policy, inv)
     if matched_index is not None:
+        matched_rule = policy.rules[matched_index]
+        # H3 narrowness: if matched rule required clean taint, persisted rule cannot drop it.
+        if matched_rule.spec.requires_clean_taint and not match.get("requires_clean_taint"):
+            return
+        # H3 narrowness: if matched rule required lease, persisted rule cannot drop it.
+        if matched_rule.spec.requires_lease and not match.get("requires_lease"):
+            return
+        # H3 narrowness: if matched rule restricted max_taint, persisted rule cannot widen it.
+        if matched_rule.spec.max_taint is not None:
+            persisted_max = match.get("max_taint")
+            if persisted_max is None:
+                return
+            try:
+                if TaintLevel.from_value(persisted_max) > TaintLevel.from_value(matched_rule.spec.max_taint):
+                    return
+            except Exception:
+                return
+
         for i, later_rule in enumerate(policy.rules):
             if i <= matched_index:
                 continue
@@ -644,7 +794,9 @@ def _resolve_policy_match(policy: Policy, inv: Invocation) -> str:
     return f"{overlay}:{rule.action}"
 
 
-def _resolve_policy_match_index(policy: Policy, inv: Invocation) -> int | None:
+def _resolve_policy_match_index(
+    policy: Policy, inv: Invocation, *, session: AgentSession | None = None
+) -> int | None:
     """Return the index of the first matching (scope-filtered) rule, or None."""
     env = inv.context.extra.get("env") if inv.context.extra else None
     env_str = env if isinstance(env, str) else None
@@ -655,12 +807,14 @@ def _resolve_policy_match_index(policy: Policy, inv: Invocation) -> int | None:
             env=env_str,
         ):
             continue
-        if rule.matches(inv):
+        if rule.matches(inv, session=session):
             return i
     return None
 
 
-def _evaluate_with_match(policy: Policy, inv: Invocation) -> tuple[PolicyOutcome, str, Rule | None]:
+def _evaluate_with_match(
+    policy: Policy, inv: Invocation, *, session: AgentSession | None = None
+) -> tuple[PolicyOutcome, str, Rule | None]:
     """Evaluate the policy and return (outcome, policy_match_label, matched_rule)
     in a single ruleset scan, avoiding redundant iteration."""
     env = inv.context.extra.get("env") if inv.context.extra else None
@@ -673,7 +827,7 @@ def _evaluate_with_match(policy: Policy, inv: Invocation) -> tuple[PolicyOutcome
             env=env_str,
         ):
             continue
-        if rule.matches(inv):
+        if rule.matches(inv, session=session):
             outcome = _action_to_outcome(rule.action)
             overlay = rule.overlay_id or "inline"
             label = f"{overlay}:{rule.action}"
@@ -683,7 +837,11 @@ def _evaluate_with_match(policy: Policy, inv: Invocation) -> tuple[PolicyOutcome
 
 
 def _resolve_batching(
-    policy: Policy, inv: Invocation, matched: Rule | None = None
+    policy: Policy,
+    inv: Invocation,
+    matched: Rule | None = None,
+    *,
+    session: AgentSession | None = None,
 ) -> Mapping[str, Any] | None:
     """Extract the matched rule's ``batching`` config for the fatigue layer .
 
@@ -692,14 +850,18 @@ def _resolve_batching(
     """
     if matched is not None:
         return matched.spec.batching
-    idx = _resolve_policy_match_index(policy, inv)
+    idx = _resolve_policy_match_index(policy, inv, session=session)
     if idx is None:
         return None
     return policy.rules[idx].spec.batching
 
 
 def _resolve_quorum(
-    policy: Policy, inv: Invocation, matched: Rule | None = None
+    policy: Policy,
+    inv: Invocation,
+    matched: Rule | None = None,
+    *,
+    session: AgentSession | None = None,
 ) -> Mapping[str, Any] | None:
     """Extract the matched rule's quorum config for the responder .
 
@@ -714,7 +876,7 @@ def _resolve_quorum(
             "approver_roles": tuple(spec.approver_roles),
             "approver_allowlist": tuple(spec.approver_allowlist),
         }
-    idx = _resolve_policy_match_index(policy, inv)
+    idx = _resolve_policy_match_index(policy, inv, session=session)
     if idx is None:
         return None
     spec = policy.rules[idx].spec
@@ -728,28 +890,22 @@ def _resolve_quorum(
 
 
 def _infer_quorum_state(
-    policy: Policy, inv: Invocation, decision: Decision, matched: Rule | None = None
+    policy: Policy,
+    inv: Invocation,
+    decision: Decision,
+    matched: Rule | None = None,
+    *,
+    session: AgentSession | None = None,
 ) -> str | None:
     """Derive the ``quorum_state`` audit label from the matched rule + decision
     (Q10). Pure - no responder field required.
 
     When ``matched`` is provided (pre-resolved), uses it directly to avoid
     a redundant policy scan.
-
-    Returns one of:
-      - ``"met"``    — quorum configured AND decision is allow*: distinct-role
-        approvals were collected (the responder resolved to ALLOW/ALLOW_ONCE).
-      - ``"failed"`` — quorum configured AND decision is DENY (timeout or
-        approver disagreement; per Q10 a quorum-time DENY falls to DENY).
-      - ``"pending"`` — quorum configured AND decision is DEFER (reuses
-        existing DEFER semantics, Q10; the agent will retry).
-      - ``None``     — no quorum configured (single-approver path, or not a
-        prompt-resolved path). Matches the  audit surface for v0.4 single-
-        approver prompts, leaving their audit events unchanged.
     """
     if matched is not None and matched.spec.quorum is not None:
         return _infer_quorum_state_from_decision(decision)
-    if _resolve_quorum(policy, inv) is None:
+    if _resolve_quorum(policy, inv, session=session) is None:
         return None
     return _infer_quorum_state_from_decision(decision)
 

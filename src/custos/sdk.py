@@ -189,7 +189,18 @@ def _wrap_one(
 ) -> Callable[..., Any]:
     @functools.wraps(tool)
     def proxy(*args: Any, **kwargs: Any) -> Any:
+        session_id = kwargs.pop("custos_session_id", None)
         ctx = kwargs.pop("custos_context", None) or _default_context
+        if session_id and ctx.session_id is None:
+            ctx = SubjectContext(
+                user_id=ctx.user_id,
+                goal_id=ctx.goal_id,
+                task_id=ctx.task_id,
+                delegation_chain=ctx.delegation_chain,
+                session_ttl=ctx.session_ttl,
+                extra=ctx.extra,
+                session_id=session_id,
+            )
         sig = inspect.signature(tool)
         try:
             bound = sig.bind(*args, **kwargs)
@@ -206,8 +217,8 @@ def _wrap_one(
         )
         snapshot = context_provider.get_snapshot() if context_provider else None
         result = gateway.decide(inv, snapshot=snapshot)
-        if result.decision == Decision.QUARANTINE and memory_wipe is not None:
-            if context_provider is not None:
+        if result.decision == Decision.QUARANTINE:
+            if memory_wipe is not None and context_provider is not None:
                 current_ctx = context_provider.get_snapshot()
                 memory_wipe.sanitize(
                     current_ctx,
@@ -222,7 +233,7 @@ def _wrap_one(
                 policy_match=result.audit.policy_match,
                 assistant=result.audit.assistant,
             )
-        if result.decision in (Decision.DENY, Decision.DEFER):
+        if not result.decision.is_allow:
             raise PermissionDenied(
                 name,
                 result.decision.value,

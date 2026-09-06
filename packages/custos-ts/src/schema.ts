@@ -103,6 +103,10 @@ export interface AuditEvent {
   schema_version?: string;
   // A12 context inspector name  — emitted on `inspect:<name>` paths.
   inspector?: string | null;
+  session_id?: string | null;
+  session_taint?: string | null;
+  lease_id?: string | null;
+  bubble_id?: string | null;
 }
 
 // Assistant output  — produced by an assistant, consumed

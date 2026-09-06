@@ -124,6 +124,7 @@ class AsyncGateway:
         inspectors: list[ContextInspector | ContextInspectorAsync] | None = None,
         local_only: bool = False,
         session_store: SessionStore | None = None,
+        bubble_manager: Any | None = None,
     ) -> None:
         """``local_only`` enables the air-gapped profile (H4). See
         :class:`custos.gateway.Gateway` (C4 regression, council 2026-07-22).
@@ -139,6 +140,7 @@ class AsyncGateway:
         self._session_store: SessionStore = (
             session_store if session_store is not None else InMemorySessionStore()
         )
+        self._bubble_manager = bubble_manager
 
         registry = AssistantRegistry(local_only=local_only)
         if assistants:
@@ -160,6 +162,11 @@ class AsyncGateway:
     def session_store(self) -> SessionStore:
         """Accessor to the active session store."""
         return self._session_store
+
+    @property
+    def bubble_manager(self) -> Any | None:
+        """Accessor to the active bubble manager."""
+        return self._bubble_manager
 
     async def decide(
         self, inv: Invocation, *, snapshot: ContextSnapshot | None = None
@@ -187,6 +194,10 @@ class AsyncGateway:
             or (f"{inv.context.user_id}:{inv.context.goal_id}" if inv.context.goal_id else inv.context.user_id)
         )
         session = self._session_store.get_or_create(session_id, inv.context)
+        if self._bubble_manager is not None and getattr(session, "bubble", None) is None:
+            created_bubble = await asyncio.to_thread(self._bubble_manager.get_or_create, session_id)
+            if getattr(session, "bubble", None) is None:
+                session.bubble = created_bubble
         if inv.context.delegation_chain:
             for parent_id in inv.context.delegation_chain:
                 parent_sess = self._session_store.get(parent_id) or self._session_store.get(
@@ -233,6 +244,7 @@ class AsyncGateway:
                 responder=None,
                 session_id=session.session_id,
                 session_taint=session.taint_level.name,
+                bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
             )
             return DecideResult(decision=Decision.QUARANTINE, audit=event)
 
@@ -272,6 +284,7 @@ class AsyncGateway:
                 session_id=session.session_id,
                 session_taint=session.taint_level.name,
                 lease_id=used_lease_id,
+                bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
             )
             session.record_invocation(
                 tool=inv.tool,
@@ -295,6 +308,7 @@ class AsyncGateway:
                 session_id=session.session_id,
                 session_taint=session.taint_level.name,
                 lease_id=used_lease_id,
+                bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
             )
             session.record_invocation(
                 tool=inv.tool,
@@ -322,6 +336,7 @@ class AsyncGateway:
                     session_id=session.session_id,
                     session_taint=session.taint_level.name,
                     lease_id=used_lease_id,
+                    bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
                 )
                 session.record_invocation(
                     tool=inv.tool,
@@ -489,6 +504,7 @@ class AsyncGateway:
                 session_id=session.session_id,
                 session_taint=session.taint_level.name,
                 lease_id=used_lease_id,
+                bubble_id=getattr(session.bubble, "bubble_id", None) if getattr(session, "bubble", None) else None,
             )
             session.record_invocation(
                 tool=inv.tool,
@@ -577,6 +593,7 @@ class AsyncGateway:
         session_id: str | None = None,
         session_taint: str | None = None,
         lease_id: str | None = None,
+        bubble_id: str | None = None,
     ) -> AuditEvent:
         """Emit the structured audit event . Redacts args first .
         Returns the emitted event so callers can capture it without
@@ -604,6 +621,7 @@ class AsyncGateway:
             session_id=session_id,
             session_taint=session_taint,
             lease_id=lease_id,
+            bubble_id=bubble_id,
         )
         self._audit.emit(event)
         return event

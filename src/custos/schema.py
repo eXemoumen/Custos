@@ -580,6 +580,7 @@ class AuditEvent:
     session_id: str | None = None
     session_taint: str | None = None
     lease_id: str | None = None
+    bubble_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for JSONL/structured sinks ."""
@@ -605,4 +606,6 @@ class AuditEvent:
             res["session_taint"] = self.session_taint
         if self.lease_id is not None:
             res["lease_id"] = self.lease_id
+        if self.bubble_id is not None:
+            res["bubble_id"] = self.bubble_id
         return res

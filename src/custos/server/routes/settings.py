@@ -66,3 +66,46 @@ async def update_settings(
                 gw.audit_sink._signing_key = body.hmac_key.strip().encode("utf-8")
 
     return {"status": "success", "message": "Settings updated successfully"}
+
+
+class TestOllamaRequest(BaseModel):
+    ollama_url: str | None = None
+
+
+@router.post("/test-ollama")
+async def test_ollama_connection(
+    body: TestOllamaRequest | None = None,
+    gw: GatewayManager = Depends(get_gw_manager),
+) -> dict[str, Any]:
+    """Test connectivity to the local Ollama LLM service and retrieve loaded models."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    url = (body.ollama_url if body and body.ollama_url else None) or gw.config.ollama_url or "http://localhost:11434"
+    url = url.rstrip("/")
+    target = f"{url}/api/tags"
+
+    try:
+        req = urllib.request.Request(target, headers={"User-Agent": "Custos-Control-Plane/1.1.1"})
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            if resp.status == 200:
+                payload = json.loads(resp.read().decode("utf-8"))
+                models = [m.get("name") for m in payload.get("models", []) if isinstance(m, dict)]
+                return {
+                    "reachable": True,
+                    "url": url,
+                    "models": models,
+                    "message": f"Successfully connected to Ollama ({len(models)} models available).",
+                }
+            return {
+                "reachable": False,
+                "url": url,
+                "error": f"Ollama returned HTTP {resp.status}",
+            }
+    except Exception as exc:
+        return {
+            "reachable": False,
+            "url": url,
+            "error": f"Connection failed: {exc}",
+        }

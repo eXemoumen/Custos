@@ -68,3 +68,66 @@ async def test_policy_match(
             "description": getattr(matched.spec, "description", None),
         } if matched else None,
     }
+
+
+class PolicyValidateRequest(BaseModel):
+    policy: dict[str, Any] | None = None
+    yaml_content: str | None = None
+
+
+@router.post("/validate")
+async def validate_policy(body: PolicyValidateRequest) -> dict[str, Any]:
+    """Validate a candidate policy structure or YAML string without applying it."""
+    from custos.policy import Policy
+    import yaml
+
+    data = body.policy
+    if data is None and body.yaml_content is not None:
+        try:
+            parsed = yaml.safe_load(body.yaml_content)
+            if not isinstance(parsed, dict):
+                return {"valid": False, "error": "YAML content must evaluate to a dictionary"}
+            data = parsed
+        except Exception as e:
+            return {"valid": False, "error": f"YAML syntax error: {e}"}
+
+    if data is None:
+        return {"valid": False, "error": "Must provide either 'policy' dictionary or 'yaml_content'"}
+
+    try:
+        candidate = Policy.from_dict(data)
+        return {
+            "valid": True,
+            "rule_count": len(candidate._rules_ro),
+            "default": candidate._default,
+            "message": f"Policy definition is valid ({len(candidate._rules_ro)} rules parsed).",
+        }
+    except Exception as err:
+        return {"valid": False, "error": f"Invalid policy definition: {err}"}
+
+
+@router.post("/reload")
+async def reload_policy(gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    """Force reload the base policy from disk and recompile the Knowledge Base overlay."""
+    gw.recompile_and_reload()
+    return {
+        "status": "success",
+        "message": "Policy reloaded successfully from source and Knowledge Base.",
+        "default": gw._policy._default,
+        "total_rules": len(gw._policy._rules_ro),
+    }
+
+
+@router.get("/overlays")
+async def list_overlays(gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    """List loaded policy overlays and their rule counts in evaluation priority order."""
+    overlay_counts: dict[str, int] = {}
+    for r in gw._policy._rules_ro:
+        oid = r.overlay_id or "base_policy"
+        overlay_counts[oid] = overlay_counts.get(oid, 0) + 1
+
+    return {
+        "total_overlays": len(overlay_counts),
+        "overlays": [{"id": k, "rule_count": v} for k, v in overlay_counts.items()],
+    }
+

@@ -71,6 +71,24 @@ async def create_asset(body: AssetCreate, gw: GatewayManager = Depends(get_gw_ma
     return added.to_dict()
 
 
+@router.get("/assets/{asset_id}")
+async def get_asset(asset_id: str, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    asset = gw.kb_store.get_asset(asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return asset.to_dict()
+
+
+@router.post("/assets/{asset_id}/toggle")
+async def toggle_asset(asset_id: str, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    asset = gw.kb_store.get_asset(asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    updated = gw.kb_store.update_asset(asset_id, {"enabled": not asset.enabled})
+    gw.recompile_and_reload()
+    return updated.to_dict()
+
+
 @router.put("/assets/{asset_id}")
 async def update_asset(
     asset_id: str,
@@ -123,6 +141,14 @@ async def list_rules(gw: GatewayManager = Depends(get_gw_manager)) -> list[dict[
     return [r.to_dict() for r in gw.kb_store.list_rules()]
 
 
+@router.get("/rules/{rule_id}")
+async def get_rule(rule_id: str, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    rule = gw.kb_store.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return rule.to_dict()
+
+
 @router.post("/rules")
 async def create_rule(body: RuleCreate, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
     rule = GuardrailRule(
@@ -138,6 +164,16 @@ async def create_rule(body: RuleCreate, gw: GatewayManager = Depends(get_gw_mana
     added = gw.kb_store.add_rule(rule)
     gw.recompile_and_reload()
     return added.to_dict()
+
+
+@router.post("/rules/{rule_id}/toggle")
+async def toggle_rule(rule_id: str, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    rule = gw.kb_store.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    updated = gw.kb_store.update_rule(rule_id, {"enabled": not rule.enabled})
+    gw.recompile_and_reload()
+    return updated.to_dict()
 
 
 @router.put("/rules/{rule_id}")
@@ -175,9 +211,27 @@ class ThreatCreate(BaseModel):
     enabled: bool = True
 
 
+class ThreatUpdate(BaseModel):
+    name: str | None = None
+    pattern: str | None = None
+    is_regex: bool | None = None
+    severity: str | None = None
+    description: str | None = None
+    action: str | None = None
+    enabled: bool | None = None
+
+
 @router.get("/threats")
 async def list_threats(gw: GatewayManager = Depends(get_gw_manager)) -> list[dict[str, Any]]:
     return [t.to_dict() for t in gw.kb_store.list_threats()]
+
+
+@router.get("/threats/{threat_id}")
+async def get_threat(threat_id: str, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    threat = gw.kb_store.get_threat(threat_id)
+    if not threat:
+        raise HTTPException(status_code=404, detail="Threat pattern not found")
+    return threat.to_dict()
 
 
 @router.post("/threats")
@@ -206,12 +260,81 @@ async def create_threat(body: ThreatCreate, gw: GatewayManager = Depends(get_gw_
     return added.to_dict()
 
 
+@router.put("/threats/{threat_id}")
+async def update_threat(
+    threat_id: str,
+    body: ThreatUpdate,
+    gw: GatewayManager = Depends(get_gw_manager),
+) -> dict[str, Any]:
+    existing = gw.kb_store.get_threat(threat_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Threat pattern not found")
+    if body.pattern is not None:
+        pat = body.pattern.strip()
+        if not pat:
+            raise HTTPException(status_code=400, detail="Pattern cannot be empty")
+        if len(pat) > 1000:
+            raise HTTPException(status_code=400, detail="Threat pattern exceeds maximum allowed length of 1000 characters")
+        is_regex = body.is_regex if body.is_regex is not None else existing.is_regex
+        if is_regex:
+            try:
+                re.compile(pat)
+            except re.error as err:
+                raise HTTPException(status_code=400, detail=f"Invalid regular expression: {err}") from err
+
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    updated = gw.kb_store.update_threat(threat_id, updates)
+    return updated.to_dict()
+
+
+@router.post("/threats/{threat_id}/toggle")
+async def toggle_threat(threat_id: str, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    threat = gw.kb_store.get_threat(threat_id)
+    if not threat:
+        raise HTTPException(status_code=404, detail="Threat pattern not found")
+    updated = gw.kb_store.update_threat(threat_id, {"enabled": not threat.enabled})
+    return updated.to_dict()
+
+
 @router.delete("/threats/{threat_id}")
 async def delete_threat(threat_id: str, gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
     deleted = gw.kb_store.delete_threat(threat_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Threat pattern not found")
     return {"status": "deleted", "id": threat_id}
+
+
+# --- Import & Export ---
+
+class ImportKnowledgeRequest(BaseModel):
+    data: dict[str, Any]
+    overwrite: bool = False
+
+
+@router.get("/export")
+async def export_knowledge_base(gw: GatewayManager = Depends(get_gw_manager)) -> dict[str, Any]:
+    """Export all Knowledge Base assets, rules, and threats as a JSON bundle."""
+    return gw.kb_store.export_data()
+
+
+@router.post("/import")
+async def import_knowledge_base(
+    body: ImportKnowledgeRequest,
+    gw: GatewayManager = Depends(get_gw_manager),
+) -> dict[str, Any]:
+    """Import assets, rules, and threats from a JSON bundle."""
+    try:
+        gw.kb_store.import_data(body.data, overwrite=body.overwrite)
+        gw.recompile_and_reload()
+        return {
+            "status": "success",
+            "message": f"Successfully imported knowledge base (overwrite={body.overwrite}).",
+            "asset_count": len(gw.kb_store.list_assets()),
+            "rule_count": len(gw.kb_store.list_rules()),
+            "threat_count": len(gw.kb_store.list_threats()),
+        }
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=f"Failed to import knowledge base: {err}") from err
 
 
 # --- Recompile & Test ---

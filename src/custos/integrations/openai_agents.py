@@ -257,15 +257,12 @@ def _make_gated_async_fn(
         snapshot = context_provider.get_snapshot() if context_provider else None
         result = await gateway.decide(inv, snapshot=snapshot)
         decision = result.decision
-        if (
-            decision == Decision.QUARANTINE
-            and memory_wipe is not None
-            and context_provider is not None
-        ):
-            current_ctx = context_provider.get_snapshot()
-            memory_wipe.sanitize(current_ctx, (), WipeStrategy.FULL)
+        if decision == Decision.QUARANTINE:
+            if memory_wipe is not None and context_provider is not None:
+                current_ctx = context_provider.get_snapshot()
+                memory_wipe.sanitize(current_ctx, (), WipeStrategy.FULL)
             raise PermissionDenied(name, decision.value)
-        if decision in (Decision.DENY, Decision.DEFER):
+        if not decision.is_allow:
             raise PermissionDenied(name, decision.value)
         res = original_fn(*args, **kwargs)
         if inspect.isawaitable(res):
@@ -316,15 +313,12 @@ def _make_gated_invoker(
         snapshot = context_provider.get_snapshot() if context_provider else None
         result = await gateway.decide(inv, snapshot=snapshot)
         decision = result.decision
-        if (
-            decision == Decision.QUARANTINE
-            and memory_wipe is not None
-            and context_provider is not None
-        ):
-            current_ctx = context_provider.get_snapshot()
-            memory_wipe.sanitize(current_ctx, (), WipeStrategy.FULL)
+        if decision == Decision.QUARANTINE:
+            if memory_wipe is not None and context_provider is not None:
+                current_ctx = context_provider.get_snapshot()
+                memory_wipe.sanitize(current_ctx, (), WipeStrategy.FULL)
             raise PermissionDenied(name, decision.value)
-        if decision in (Decision.DENY, Decision.DEFER):
+        if not decision.is_allow:
             raise PermissionDenied(name, decision.value)
         return await original_invoker(ctx_obj, forwarded_json)
 

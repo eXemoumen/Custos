@@ -254,15 +254,12 @@ def _make_gated_anthropic_handler(
         snapshot = context_provider.get_snapshot() if context_provider else None
         result = await gateway.decide(inv, snapshot=snapshot)
         decision = result.decision
-        if (
-            decision == Decision.QUARANTINE
-            and memory_wipe is not None
-            and context_provider is not None
-        ):
-            current_ctx = context_provider.get_snapshot()
-            memory_wipe.sanitize(current_ctx, (), WipeStrategy.FULL)
+        if decision == Decision.QUARANTINE:
+            if memory_wipe is not None and context_provider is not None:
+                current_ctx = context_provider.get_snapshot()
+                memory_wipe.sanitize(current_ctx, (), WipeStrategy.FULL)
             raise PermissionDenied(name, decision.value)
-        if decision in (Decision.DENY, Decision.DEFER):
+        if not decision.is_allow:
             raise PermissionDenied(name, decision.value)
         # The underlying handler may accept either (input_dict) or (**kwargs).
         # Try kwargs first (most common Anthropic dispatch pattern); fall back

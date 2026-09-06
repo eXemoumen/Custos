@@ -121,14 +121,19 @@ class KnowledgeBaseCompiler:
         for rule in store.list_rules(enabled_only=True):
             action_str = rule.action.value
             for tool_pattern in rule.target_tools:
-                for kw in rule.keywords:
+                keywords = rule.keywords or [""]
+                for kw in keywords:
+                    match_spec: dict[str, Any] = {"tool": tool_pattern}
+                    if kw:
+                        if "shell" in tool_pattern or "bash" in tool_pattern or "terminal" in tool_pattern or "cmd" in tool_pattern:
+                            match_spec["args"] = {"command": {"contains": kw}}
+                        elif "db" in tool_pattern or "sql" in tool_pattern:
+                            match_spec["args"] = {"query": {"contains": kw}}
+
                     compiled_rules.append({
-                        "match": {
-                            "tool": tool_pattern,
-                            "args": {"command": {"contains": kw}} if "shell" in tool_pattern else {"query": {"contains": kw}} if "db" in tool_pattern else {"any": True},
-                        },
+                        "match": match_spec,
                         "action": action_str,
-                        "description": f"KB Rule: {rule.name} (keyword: {kw})",
+                        "description": f"KB Rule: {rule.name}" + (f" (keyword: {kw})" if kw else ""),
                     })
 
         return {

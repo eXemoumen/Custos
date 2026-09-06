@@ -32,11 +32,15 @@ from __future__ import annotations
 import fnmatch
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from custos.policy.operators import OPERATOR_FUNCS
 from custos.policy.schema import PolicyValidationError
 from custos.schema import Invocation, SideEffect
+from custos.session.schema import TaintLevel
+
+if TYPE_CHECKING:
+    from custos.session.schema import AgentSession
 
 __all__ = ["MatchSpec", "ARG_OPERATORS"]
 
@@ -97,9 +101,12 @@ class MatchSpec:
     goal_id: str | None = None
     delegation_depth: int | None = None
     any: bool = False
+    requires_clean_taint: bool = False
+    max_taint_level: TaintLevel | None = None
+    requires_lease: bool = False
 
     @classmethod
-    def from_mapping(cls, match: Mapping[str, Any]) -> MatchSpec:
+    def from_mapping(cls, match: Mapping[str, Any], rule_spec: Any = None) -> MatchSpec:
         """Compile a match mapping  into a :class:`MatchSpec`.
 
         Raises :class:`PolicyValidationError` on a malformed mapping.
@@ -157,6 +164,17 @@ class MatchSpec:
                 f"delegation_depth must be a non-negative int, got {delegation_depth!r}"
             )
 
+        requires_clean_taint = bool(
+            match.get("requires_clean_taint", getattr(rule_spec, "requires_clean_taint", False))
+        )
+        max_taint_raw = match.get("max_taint", getattr(rule_spec, "max_taint", None))
+        max_taint_level: TaintLevel | None = None
+        if max_taint_raw is not None:
+            max_taint_level = TaintLevel.from_value(max_taint_raw)
+        requires_lease = bool(
+            match.get("requires_lease", getattr(rule_spec, "requires_lease", False))
+        )
+
         return cls(
             tool_glob=tool_glob,
             risk_tier_min=risk_tier_min,
@@ -166,12 +184,27 @@ class MatchSpec:
             goal_id=goal_id,
             delegation_depth=delegation_depth,
             any=False,
+            requires_clean_taint=requires_clean_taint,
+            max_taint_level=max_taint_level,
+            requires_lease=requires_lease,
         )
 
-    def matches(self, inv: Invocation) -> bool:
-        """Pure predicate over (invocation, context). ."""
+    def matches(self, inv: Invocation, *, session: AgentSession | None = None) -> bool:
+        """Pure predicate over (invocation, context, session)."""
         if self.any:
             return True
+
+        if self.requires_clean_taint:
+            if session is None or session.taint_level > TaintLevel.CONTROLLED:
+                return False
+
+        if self.max_taint_level is not None:
+            if session is None or session.taint_level > self.max_taint_level:
+                return False
+
+        if self.requires_lease:
+            if session is None or session.get_valid_lease(inv.tool, args=inv.args) is None:
+                return False
 
         if self.tool_glob is not None and not fnmatch.fnmatchcase(inv.tool, self.tool_glob):
             return False

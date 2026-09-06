@@ -91,6 +91,9 @@ class PolicyRuleSpec:
     approver_roles: Sequence[str] = ()
     approver_allowlist: Sequence[str] = ()
     allow_external_data: bool = False
+    requires_clean_taint: bool = False
+    max_taint: str | int | None = None
+    requires_lease: bool = False
 
 
 @dataclass(frozen=True)
@@ -156,6 +159,9 @@ def validate_rule(rule: PolicyRuleSpec) -> None:
             "goal_id",
             "delegation_depth",
             "any",
+            "requires_clean_taint",
+            "max_taint",
+            "requires_lease",
         }
     )
     unknown = set(match) - known_keys
@@ -163,6 +169,15 @@ def validate_rule(rule: PolicyRuleSpec) -> None:
         raise PolicyValidationError(
             f"unknown match criteria {sorted(unknown)!r}; known: {sorted(known_keys)!r}"
         )
+
+    if "requires_clean_taint" in match and not isinstance(match["requires_clean_taint"], bool):
+        raise PolicyValidationError("match.requires_clean_taint must be a bool")
+
+    if "max_taint" in match and not isinstance(match["max_taint"], (int, str)):
+        raise PolicyValidationError("match.max_taint must be an int or string")
+
+    if "requires_lease" in match and not isinstance(match["requires_lease"], bool):
+        raise PolicyValidationError("match.requires_lease must be a bool")
 
     if "tool" in match and not isinstance(match["tool"], str):
         raise PolicyValidationError("match.tool must be a string glob")
@@ -238,6 +253,21 @@ def validate_rule(rule: PolicyRuleSpec) -> None:
     if not isinstance(rule.allow_external_data, bool):
         raise PolicyValidationError(
             f"allow_external_data must be a bool, got {type(rule.allow_external_data).__name__}"
+        )
+
+    if not isinstance(rule.requires_clean_taint, bool):
+        raise PolicyValidationError(
+            f"requires_clean_taint must be a bool, got {type(rule.requires_clean_taint).__name__}"
+        )
+
+    if rule.max_taint is not None and not isinstance(rule.max_taint, (int, str)):
+        raise PolicyValidationError(
+            f"max_taint must be an int or string, got {type(rule.max_taint).__name__}"
+        )
+
+    if not isinstance(rule.requires_lease, bool):
+        raise PolicyValidationError(
+            f"requires_lease must be a bool, got {type(rule.requires_lease).__name__}"
         )
 
 

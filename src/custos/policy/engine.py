@@ -29,7 +29,7 @@ from custos.policy.schema import (
 from custos.schema import Invocation, PolicyOutcome
 
 if TYPE_CHECKING:
-    pass
+    from custos.session.schema import AgentSession
 
 __all__ = ["Policy", "Rule"]
 
@@ -50,13 +50,13 @@ class Rule:
         # load rather than at first evaluation.
         validate_rule(spec)
         self.spec = spec
-        self._match = MatchSpec.from_mapping(spec.match)
+        self._match = MatchSpec.from_mapping(spec.match, rule_spec=spec)
         self._overlay_id = overlay_id
         self._scope = scope
 
-    def matches(self, inv: Invocation) -> bool:
-        """Pure predicate over (invocation, context). ."""
-        return self._match.matches(inv)
+    def matches(self, inv: Invocation, *, session: AgentSession | None = None) -> bool:
+        """Pure predicate over (invocation, context, session)."""
+        return self._match.matches(inv, session=session)
 
     @property
     def action(self) -> str:
@@ -65,6 +65,14 @@ class Rule:
     @property
     def allow_external_data(self) -> bool:
         return self.spec.allow_external_data
+
+    @property
+    def requires_lease(self) -> bool:
+        return self.spec.requires_lease or self._match.requires_lease
+
+    @property
+    def requires_clean_taint(self) -> bool:
+        return self.spec.requires_clean_taint or self._match.requires_clean_taint
 
     @property
     def overlay_id(self) -> str | None:
